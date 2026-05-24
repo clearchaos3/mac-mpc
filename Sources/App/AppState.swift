@@ -83,6 +83,7 @@ final class AppState {
             project.pads[selectedPad]?.loopStart = 0
             audio.stopPreview()
             recomputeWaveform()
+            syncPadToEngine(selectedPad)
             lastEvent = "Loaded \(entry.displayName) → \(selectedPad)"
         } catch {
             NSLog("loadSample failed: \(error)")
@@ -107,7 +108,25 @@ final class AppState {
         project.pads[selectedPad]?.end = 1
         project.pads[selectedPad]?.loopStart = 0
         recomputeWaveform()
+        syncPadToEngine(selectedPad)
         lastEvent = "Trimmed \(selectedPad)"
+    }
+
+    /// Push the pad's playback params (start/end/gain/pan/reverse) to the
+    /// audio engine so triggers — including from the MIDI thread — honor edits.
+    private func syncPadToEngine(_ pad: PadAddress) {
+        guard let p = project.pads[pad] else { return }
+        var params = TriggerParams()
+        params.startFraction = p.start
+        params.endFraction = p.end
+        params.gain = gainFromDB(p.volume_dB)
+        params.pan = Float(max(-1, min(1, p.pan)))
+        params.reverse = p.reverse
+        audio.setTriggerParams(params, for: pad)
+    }
+
+    private func gainFromDB(_ dB: Double) -> Float {
+        dB <= -74 ? 0 : Float(pow(10.0, dB / 20.0))
     }
 
     private func recomputeWaveform() {
@@ -208,6 +227,10 @@ final class AppState {
 
         default: break
         }
+
+        // Push start/end/volume/pan/reverse to the engine so the change is
+        // audible on the next trigger. (Pitch/filter/envelope DSP still TODO.)
+        syncPadToEngine(selectedPad)
     }
 
     // MARK: - Formatters
