@@ -2,8 +2,8 @@ import Foundation
 
 /// A single recorded note event inside a sequence.
 public struct SequenceEvent: Hashable, Codable, Sendable {
-    /// Tick position from the start of the sequence (24 ticks per 16th-note,
-    /// per AKAI's 960 PPQ convention — see MPC Sample tech spec).
+    /// Tick position from the start of the sequence. 960 ticks per quarter
+    /// note (AKAI convention); a 1/16th step is 240 ticks. See `Timing`.
     public var tick: Int
     public var bank: BankIndex
     public var pad: PadIndex
@@ -11,7 +11,7 @@ public struct SequenceEvent: Hashable, Codable, Sendable {
     /// Note length in ticks; for one-shot samples this is informational.
     public var lengthTicks: Int
 
-    public init(tick: Int, bank: BankIndex, pad: PadIndex, velocity: UInt8, lengthTicks: Int = 24) {
+    public init(tick: Int, bank: BankIndex, pad: PadIndex, velocity: UInt8, lengthTicks: Int = 240) {
         self.tick = tick
         self.bank = bank
         self.pad = pad

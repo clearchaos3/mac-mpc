@@ -9,12 +9,13 @@ struct ContentView: View {
         VStack(spacing: 14) {
             header
             DisplayPanelView()
+            TransportView()
             PadGridView()
             controls
             statusBar
         }
         .padding(20)
-        .frame(minWidth: 760, minHeight: 1040)
+        .frame(minWidth: 780, minHeight: 1100)
         .background(Color(white: 0.08))
         .sheet(isPresented: $state.isBrowserOpen) {
             SampleBrowserView()

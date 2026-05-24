@@ -43,6 +43,11 @@ final class AppState {
     var browser: SampleBrowser
     var isBrowserOpen: Bool = false
 
+    /// Transport / sequencer.
+    let sequencer: SequencerEngine
+    var transport: SequencerEngine.Transport = .stopped
+    var playheadTick: Int = 0
+
     var lastEvent: String = "—"
 
     enum ConnectionStatus: Equatable {
@@ -53,6 +58,8 @@ final class AppState {
     init() {
         audio.start()
         browser = SampleBrowser(audio: audio)
+        sequencer = SequencerEngine(audio: audio)
+        wireSequencer()
     }
 
     func start() {
@@ -60,11 +67,94 @@ final class AppState {
         startNano()
     }
 
+    // MARK: - Transport
+
+    private func wireSequencer() {
+        sequencer.onTransport = { [weak self] t in
+            Task { @MainActor in self?.transport = t }
+        }
+        sequencer.onPlayhead = { [weak self] tick in
+            Task { @MainActor in self?.playheadTick = tick }
+        }
+        sequencer.onEventRecorded = { [weak self] event in
+            Task { @MainActor in
+                self?.project.sequences[self?.project.activeSequence ?? PadAddress(bank: .A, pad: PadIndex(0))]?.events.append(event)
+            }
+        }
+    }
+
+    /// Push tempo / loop length / quantize from the active sequence into the engine.
+    private func configureSequencerFromActiveSequence() {
+        let seq = project.sequences[project.activeSequence] ?? MMSequence()
+        sequencer.setTempo(seq.bpm)
+        sequencer.setLoop(bars: seq.bars,
+                          numerator: project.timeSigNumerator,
+                          denominator: project.timeSigDenominator)
+        sequencer.setQuantize(division: seq.quantizeDivision, enabled: true)
+        sequencer.loadEvents(seq.events)
+    }
+
+    func playSequence() {
+        configureSequencerFromActiveSequence()
+        sequencer.play()
+    }
+
+    func recordSequence() {
+        configureSequencerFromActiveSequence()
+        sequencer.record()
+    }
+
+    func stopTransport() {
+        sequencer.stop()
+        playheadTick = 0
+    }
+
+    func togglePlay() {
+        if transport == .stopped { playSequence() } else { stopTransport() }
+    }
+
+    var activeSequenceBPM: Double {
+        get { project.sequences[project.activeSequence]?.bpm ?? project.globalBPM }
+        set {
+            project.sequences[project.activeSequence]?.bpm = newValue
+            sequencer.setTempo(newValue)
+        }
+    }
+
+    var activeSequenceBars: Int {
+        get { project.sequences[project.activeSequence]?.bars ?? 4 }
+        set {
+            project.sequences[project.activeSequence]?.bars = newValue
+            sequencer.setLoop(bars: newValue,
+                              numerator: project.timeSigNumerator,
+                              denominator: project.timeSigDenominator)
+        }
+    }
+
+    var activeSequenceQuantize: Int {
+        get { project.sequences[project.activeSequence]?.quantizeDivision ?? 16 }
+        set {
+            project.sequences[project.activeSequence]?.quantizeDivision = newValue
+            sequencer.setQuantize(division: newValue, enabled: true)
+        }
+    }
+
+    /// 1-based bar.beat readout for the playhead.
+    var playheadDisplay: String {
+        let ticksPerBeat = Timing.ticksPerQuarter
+        let beatsPerBar = project.timeSigNumerator
+        let beat = playheadTick / ticksPerBeat
+        let bar = beat / beatsPerBar
+        let beatInBar = beat % beatsPerBar
+        return String(format: "%03d.%d", bar + 1, beatInBar + 1)
+    }
+
     // MARK: - Pad operations
 
     func selectAndTrigger(_ pad: PadAddress, velocity: UInt8 = 127) {
         selectedPad = pad
         audio.triggerPad(pad, velocity: velocity)
+        sequencer.recordHit(bank: pad.bank, pad: pad.pad, velocity: velocity)
     }
 
     func openBrowser() {
@@ -284,6 +374,7 @@ final class AppState {
                 guard let self else { return }
                 let addr = PadMapping.address(for: coord)
                 self.audio.triggerPad(addr, velocity: velocity)
+                self.sequencer.recordHit(bank: addr.bank, pad: addr.pad, velocity: velocity)
             }
         )
         do {
