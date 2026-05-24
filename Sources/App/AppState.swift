@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AVFoundation
+import AppKit
 import MMAudio
 import MMMidi
 import MMModels
@@ -160,6 +161,83 @@ final class AppState {
     func openBrowser() {
         browser.refresh()
         isBrowserOpen = true
+    }
+
+    // MARK: - Project save / load
+
+    var currentProjectURL: URL?
+
+    func newProject() {
+        sequencer.stop()
+        clearAllPadsInEngine()
+        project = Project()
+        currentProjectURL = nil
+        selectedPad = PadAddress(bank: .A, pad: PadIndex(0))
+        recomputeWaveform()
+        lastEvent = "New project"
+    }
+
+    func saveProject() {
+        if let url = currentProjectURL { write(to: url) } else { presentSavePanel() }
+    }
+
+    func presentSavePanel() {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(project.name).\(ProjectStore.fileExtension)"
+        guard panel.runModal() == .OK, var url = panel.url else { return }
+        if url.pathExtension != ProjectStore.fileExtension {
+            url = url.appendingPathExtension(ProjectStore.fileExtension)
+        }
+        write(to: url)
+    }
+
+    private func write(to url: URL) {
+        do {
+            try ProjectStore.save(project, to: url)
+            currentProjectURL = url
+            project.name = url.deletingPathExtension().lastPathComponent
+            lastEvent = "Saved \(project.name)"
+        } catch {
+            lastEvent = "Save failed: \(error.localizedDescription)"
+        }
+    }
+
+    func presentOpenPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        loadProject(from: url)
+    }
+
+    func loadProject(from url: URL) {
+        do {
+            let loaded = try ProjectStore.load(from: url)
+            sequencer.stop()
+            clearAllPadsInEngine()
+            project = loaded
+            currentProjectURL = url
+            for (addr, pad) in project.pads {
+                guard let sampleURL = pad.sampleURL else { continue }
+                try? audio.loadSample(url: sampleURL, into: addr)
+                syncPadToEngine(addr)
+            }
+            selectedPad = PadAddress(bank: .A, pad: PadIndex(0))
+            recomputeWaveform()
+            lastEvent = "Loaded \(project.name)"
+        } catch {
+            lastEvent = "Load failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func clearAllPadsInEngine() {
+        for bank in BankIndex.allCases {
+            for i in 0..<16 {
+                audio.clearPad(PadAddress(bank: bank, pad: PadIndex(i)))
+            }
+        }
     }
 
     func loadHighlightedToSelectedPad() {

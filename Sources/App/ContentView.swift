@@ -43,7 +43,7 @@ struct ContentView: View {
                     .font(.system(.body, design: .monospaced))
             }
             .controlSize(.large)
-            .keyboardShortcut("o", modifiers: [.command])
+            .keyboardShortcut("b", modifiers: [.command])
 
             Button {
                 state.commitTrim()
@@ -60,6 +60,10 @@ struct ContentView: View {
                 .foregroundStyle(.yellow)
 
             Spacer()
+
+            Text(state.currentProjectURL?.deletingPathExtension().lastPathComponent ?? "unsaved")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.5))
         }
     }
 
