@@ -8,12 +8,13 @@ struct ContentView: View {
 
         VStack(spacing: 14) {
             header
+            DisplayPanelView()
             PadGridView()
             controls
             statusBar
         }
         .padding(20)
-        .frame(minWidth: 760, minHeight: 820)
+        .frame(minWidth: 760, minHeight: 1040)
         .background(Color(white: 0.08))
         .sheet(isPresented: $state.isBrowserOpen) {
             SampleBrowserView()
@@ -43,9 +44,19 @@ struct ContentView: View {
             .controlSize(.large)
             .keyboardShortcut("o", modifiers: [.command])
 
-            Text("Selected pad: \(state.selectedPad.description)")
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.7))
+            Button {
+                state.commitTrim()
+            } label: {
+                Label("Trim Sample", systemImage: "scissors")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .controlSize(.large)
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
+
+            Text(state.selectedPad.description)
+                .font(.system(.body, design: .monospaced, weight: .heavy))
+                .foregroundStyle(.yellow)
 
             Spacer()
         }

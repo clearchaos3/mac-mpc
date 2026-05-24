@@ -96,6 +96,62 @@ public final class AudioEngine: @unchecked Sendable {
         return has
     }
 
+    /// Read-only access to a pad's PCM buffer (for waveform extraction).
+    public func buffer(for pad: PadAddress) -> AVAudioPCMBuffer? {
+        lock.lock()
+        let buf = padBuffers[pad]
+        lock.unlock()
+        return buf
+    }
+
+    /// Replace a pad's buffer in place (for destructive edits like Trim).
+    /// Re-uses the existing player node when possible to avoid graph churn.
+    public func replaceBuffer(for pad: PadAddress, with newBuffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let existing = padPlayers[pad] {
+            existing.stop()
+            if existing.outputFormat(forBus: 0) != newBuffer.format {
+                engine.disconnectNodeOutput(existing)
+                engine.connect(existing, to: masterMixer, format: newBuffer.format)
+            }
+        } else {
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: masterMixer, format: newBuffer.format)
+            padPlayers[pad] = player
+        }
+        padBuffers[pad] = newBuffer
+    }
+
+    /// Render a slice of `buffer` between two normalised positions into a
+    /// fresh PCM buffer. Used by the destructive Trim operation.
+    public static func slice(_ source: AVAudioPCMBuffer,
+                             startFraction: Double,
+                             endFraction: Double) -> AVAudioPCMBuffer? {
+        let total = Int(source.frameLength)
+        guard total > 0 else { return nil }
+        let s = max(0.0, min(1.0, startFraction))
+        let e = max(s, min(1.0, endFraction))
+        let startFrame = Int(Double(total) * s)
+        let endFrame = max(startFrame + 1, Int(Double(total) * e))
+        let frames = AVAudioFrameCount(endFrame - startFrame)
+        guard let dest = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: frames) else {
+            return nil
+        }
+        let channelCount = Int(source.format.channelCount)
+        if let src = source.floatChannelData, let dst = dest.floatChannelData {
+            for ch in 0..<channelCount {
+                let srcPtr = src[ch].advanced(by: startFrame)
+                let dstPtr = dst[ch]
+                dstPtr.update(from: srcPtr, count: Int(frames))
+            }
+        }
+        dest.frameLength = frames
+        return dest
+    }
+
     /// Trigger a pad. Safe to call from any thread (including the CoreMIDI thread).
     public func triggerPad(_ pad: PadAddress, velocity: UInt8) {
         lock.lock()
