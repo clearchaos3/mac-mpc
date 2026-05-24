@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+.netrc
+
+# Bundled .app output from make-app.sh
+mac-mpc.app/
