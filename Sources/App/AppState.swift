@@ -259,6 +259,58 @@ final class AppState {
         }
     }
 
+    /// Chop the selected pad's sample (honoring its current start/end) into
+    /// slices and distribute them across pads 1..N of the selected pad's
+    /// bank. Slices are baked to temp .wav files so they behave like any
+    /// other loaded sample (sequencable, editable, saveable).
+    func chopSelectedPad(_ type: ChopType) {
+        guard let full = audio.buffer(for: selectedPad),
+              let pad = project.pads[selectedPad] else {
+            lastEvent = "Nothing to chop"
+            return
+        }
+        let source: AVAudioPCMBuffer
+        if pad.start > 0 || pad.end < 1 {
+            source = AudioEngine.slice(full, startFraction: pad.start, endFraction: pad.end) ?? full
+        } else {
+            source = full
+        }
+
+        let ranges = Chopper.slices(buffer: source, type: type, maxSlices: 16)
+        guard !ranges.isEmpty else { lastEvent = "Chop produced no slices"; return }
+
+        let dir = chopsTempDir()
+        let bank = selectedPad.bank
+        var made = 0
+        for (i, range) in ranges.enumerated() where i < 16 {
+            guard let sliceBuf = AudioEngine.slice(source, startFraction: range.start, endFraction: range.end)
+            else { continue }
+            let url = dir.appendingPathComponent("slice\(i + 1).wav")
+            do {
+                try SampleLoader.write(sliceBuf, to: url)
+                let dest = PadAddress(bank: bank, pad: PadIndex(i))
+                try audio.loadSample(url: url, into: dest)
+                project.pads[dest]?.sampleURL = url
+                project.pads[dest]?.start = 0
+                project.pads[dest]?.end = 1
+                syncPadToEngine(dest)
+                made += 1
+            } catch {
+                NSLog("chop slice \(i) failed: \(error)")
+            }
+        }
+        selectedPad = PadAddress(bank: bank, pad: PadIndex(0))
+        recomputeWaveform()
+        lastEvent = "Chopped into \(made) slices on bank \(bank)"
+    }
+
+    private func chopsTempDir() -> URL {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mac-mpc/chops/\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }
+
     /// Destructive trim — render [start, end] into a new buffer, replace
     /// the pad's buffer, and reset the trim markers. MPC SHIFT+pad-13.
     func commitTrim() {

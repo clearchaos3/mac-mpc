@@ -55,6 +55,23 @@ struct ContentView: View {
             .keyboardShortcut("t", modifiers: [.command, .shift])
             .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
 
+            Menu {
+                Button("Regions: 2")  { state.chopSelectedPad(.regions(2)) }
+                Button("Regions: 4")  { state.chopSelectedPad(.regions(4)) }
+                Button("Regions: 8")  { state.chopSelectedPad(.regions(8)) }
+                Button("Regions: 16") { state.chopSelectedPad(.regions(16)) }
+                Divider()
+                Button("Threshold (more)") { state.chopSelectedPad(.threshold(0.2)) }
+                Button("Threshold (med)")  { state.chopSelectedPad(.threshold(0.5)) }
+                Button("Threshold (fewer)"){ state.chopSelectedPad(.threshold(0.8)) }
+            } label: {
+                Label("Chop", systemImage: "square.split.2x2")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
+
             Text(state.selectedPad.description)
                 .font(.system(.body, design: .monospaced, weight: .heavy))
                 .foregroundStyle(.yellow)

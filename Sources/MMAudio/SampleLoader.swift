@@ -30,4 +30,15 @@ public enum SampleLoader {
         try file.read(into: buffer)
         return buffer
     }
+
+    /// Write a PCM buffer to a `.wav` file (used to bake chop slices,
+    /// resamples, and exports into real files so they round-trip through
+    /// save/load like any other sample).
+    public static func write(_ buffer: AVAudioPCMBuffer, to url: URL) throws {
+        let file = try AVAudioFile(forWriting: url,
+                                   settings: buffer.format.settings,
+                                   commonFormat: buffer.format.commonFormat,
+                                   interleaved: buffer.format.isInterleaved)
+        try file.write(from: buffer)
+    }
 }
