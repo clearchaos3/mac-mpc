@@ -72,8 +72,7 @@ public final class AudioEngine: @unchecked Sendable {
     private var previewFormat: AVAudioFormat?
     private var previewBuffer: AVAudioPCMBuffer?
 
-    /// Master-bus compressor (Apple DynamicsProcessor). Inserted between the
-    /// master mixer and the main mixer; bypassed by default.
+    /// Master-bus compressor (Apple DynamicsProcessor). Bypassed by default.
     private let compressor: AVAudioUnitEffect = {
         let desc = AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
@@ -83,16 +82,39 @@ public final class AudioEngine: @unchecked Sendable {
         return AVAudioUnitEffect(audioComponentDescription: desc)
     }()
 
+    // Master Knob-FX chain. All inserted between the master mixer and the
+    // compressor, all bypassed by default; selecting a Knob FX un-bypasses
+    // exactly one. Using Apple's convenience AUs keeps the DSP reliable.
+    private let fxDelay = AVAudioUnitDelay()
+    private let fxReverb = AVAudioUnitReverb()
+    private let fxDistortion = AVAudioUnitDistortion()
+    private let fxEQ = AVAudioUnitEQ(numberOfBands: 1)
+
     private let lock = NSLock()
 
     public init() {
         engine.attach(masterMixer)
+        engine.attach(fxDelay)
+        engine.attach(fxReverb)
+        engine.attach(fxDistortion)
+        engine.attach(fxEQ)
         engine.attach(compressor)
+        [fxDelay, fxReverb, fxDistortion, fxEQ].forEach { $0.bypass = true }
         compressor.bypass = true
+
         let fmt = engine.mainMixerNode.outputFormat(forBus: 0)
-        // masterMixer → compressor → mainMixerNode
-        engine.connect(masterMixer, to: compressor, format: fmt)
+        // masterMixer → delay → reverb → distortion → eq → compressor → main
+        engine.connect(masterMixer, to: fxDelay, format: fmt)
+        engine.connect(fxDelay, to: fxReverb, format: fmt)
+        engine.connect(fxReverb, to: fxDistortion, format: fmt)
+        engine.connect(fxDistortion, to: fxEQ, format: fmt)
+        engine.connect(fxEQ, to: compressor, format: fmt)
         engine.connect(compressor, to: engine.mainMixerNode, format: fmt)
+
+        // Reverb defaults to a fully-wet preset; tame it so un-bypassing
+        // doesn't drown the mix until the user dials Mix up.
+        fxReverb.loadFactoryPreset(.mediumHall)
+        fxReverb.wetDryMix = 0
 
         engine.attach(previewPlayer)
         engine.connect(previewPlayer, to: masterMixer, format: fmt)
@@ -356,6 +378,59 @@ public final class AudioEngine: @unchecked Sendable {
     }
 
     public func stopPreview() { previewPlayer.stop() }
+
+    // MARK: - Knob FX (master bus)
+
+    /// Select the active Knob FX and apply its three normalised knob values.
+    /// Bypasses every FX node except the one in use.
+    public func setKnobFX(_ type: KnobFXType, k1: Double, k2: Double, k3: Double) {
+        fxDelay.bypass = true
+        fxReverb.bypass = true
+        fxDistortion.bypass = true
+        fxEQ.bypass = true
+
+        func hz(_ n: Double) -> Float { Float(20.0 * pow(1000.0, max(0, min(1, n)))) } // 20…20k log
+
+        switch type {
+        case .none:
+            break
+
+        case .delay:
+            fxDelay.bypass = false
+            fxDelay.delayTime = TimeInterval(0.01 + k1 * 0.99)   // 10 ms … ~1 s
+            fxDelay.feedback = Float(k2 * 90)                    // 0 … 90%
+            fxDelay.wetDryMix = Float(k3 * 100)
+
+        case .reverb:
+            fxReverb.bypass = false
+            // k1 picks a room size preset.
+            let presets: [AVAudioUnitReverbPreset] = [.smallRoom, .mediumRoom, .largeRoom, .mediumHall, .largeHall, .cathedral]
+            let idx = max(0, min(presets.count - 1, Int(k1 * Double(presets.count - 1))))
+            fxReverb.loadFactoryPreset(presets[idx])
+            fxReverb.wetDryMix = Float(k3 * 100)
+
+        case .distortion:
+            fxDistortion.bypass = false
+            fxDistortion.preGain = Float(-20 + k1 * 40)          // -20 … +20 dB
+            let presets: [AVAudioUnitDistortionPreset] = [.drumsBitBrush, .multiDecimated2, .multiDistortedFunk, .speechWaves]
+            let idx = max(0, min(presets.count - 1, Int(k2 * Double(presets.count - 1))))
+            fxDistortion.loadFactoryPreset(presets[idx])
+            fxDistortion.wetDryMix = Float(k3 * 100)
+
+        case .lowpass, .highpass, .bandpass:
+            fxEQ.bypass = false
+            let band = fxEQ.bands[0]
+            switch type {
+            case .lowpass:  band.filterType = .lowPass
+            case .highpass: band.filterType = .highPass
+            default:        band.filterType = .bandPass
+            }
+            band.frequency = hz(k1)
+            band.bandwidth = Float(0.05 + k2 * 4.95)  // octaves
+            band.bypass = false
+            band.gain = 0
+        }
+    }
 
     // MARK: - Master compressor
 

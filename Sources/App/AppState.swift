@@ -55,6 +55,17 @@ final class AppState {
     /// Master compressor sheet visibility.
     var isCompressorOpen: Bool = false
 
+    /// Knob FX (master bus). Session state for now.
+    var knobFXType: KnobFXType = .none { didSet { applyKnobFX() } }
+    var knobFXK1: Double = 0.5 { didSet { applyKnobFX() } }
+    var knobFXK2: Double = 0.5 { didSet { applyKnobFX() } }
+    var knobFXK3: Double = 0.5 { didSet { applyKnobFX() } }
+    var isKnobFXOpen: Bool = false
+
+    func applyKnobFX() {
+        audio.setKnobFX(knobFXType, k1: knobFXK1, k2: knobFXK2, k3: knobFXK3)
+    }
+
     var lastEvent: String = "—"
 
     enum ConnectionStatus: Equatable {

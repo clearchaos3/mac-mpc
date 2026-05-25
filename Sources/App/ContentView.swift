@@ -25,6 +25,10 @@ struct ContentView: View {
             CompressorView()
                 .environment(state)
         }
+        .sheet(isPresented: $state.isKnobFXOpen) {
+            KnobFXView()
+                .environment(state)
+        }
     }
 
     private var header: some View {
@@ -80,6 +84,14 @@ struct ContentView: View {
                 state.isCompressorOpen = true
             } label: {
                 Label("Comp", systemImage: "waveform.badge.minus")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .controlSize(.large)
+
+            Button {
+                state.isKnobFXOpen = true
+            } label: {
+                Label("Knob FX", systemImage: "dial.medium")
                     .font(.system(.body, design: .monospaced))
             }
             .controlSize(.large)
