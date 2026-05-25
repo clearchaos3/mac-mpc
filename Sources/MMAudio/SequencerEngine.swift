@@ -38,6 +38,12 @@ public final class SequencerEngine: @unchecked Sendable {
     private var loopLengthTicks: Int = Timing.loopLengthTicks(bars: 4, numerator: 4, denominator: 4)
     private var quantizeDivision: Int = 16
     private var quantizeOnRecord: Bool = true
+    /// Swing amount 0…1. 0 = straight; higher delays off-beat 1/16 notes,
+    /// up to half a 1/16 at 1.0 (the classic MPC "shuffle").
+    private var swing: Double = 0
+    /// Events with swing applied to their ticks — what playback actually
+    /// fires. Rebuilt from `events` whenever events or swing change.
+    private var playbackEvents: [SequenceEvent] = []
 
     private var startHostSeconds: Double = 0
     private var lastLoopTick: Int = 0
@@ -65,8 +71,38 @@ public final class SequencerEngine: @unchecked Sendable {
         lock.lock(); quantizeDivision = division; quantizeOnRecord = enabled; lock.unlock()
     }
 
+    public func setSwing(_ amount: Double) {
+        lock.lock()
+        swing = max(0, min(1, amount))
+        rebuildPlayback()
+        lock.unlock()
+    }
+
     public func loadEvents(_ newEvents: [SequenceEvent]) {
-        lock.lock(); events = newEvents.sorted { $0.tick < $1.tick }; lock.unlock()
+        lock.lock()
+        events = newEvents.sorted { $0.tick < $1.tick }
+        rebuildPlayback()
+        lock.unlock()
+    }
+
+    /// Recompute swung playback ticks. Caller must hold `lock`.
+    /// Off-beat 1/16 notes (odd 1/16 step index) are pushed later by up to
+    /// half a 1/16 note at swing = 1.
+    private func rebuildPlayback() {
+        let s16 = Timing.ticksPerStep(division: 16)
+        let maxDelay = Double(s16) * 0.5
+        let delay = Int((swing * maxDelay).rounded())
+        if delay == 0 {
+            playbackEvents = events
+            return
+        }
+        playbackEvents = events.map { e in
+            let stepIndex = Int((Double(e.tick) / Double(s16)).rounded())
+            guard stepIndex % 2 == 1 else { return e }
+            var swung = e
+            swung.tick = e.tick + delay
+            return swung
+        }.sorted { $0.tick < $1.tick }
     }
 
     public func currentEvents() -> [SequenceEvent] {
@@ -126,6 +162,7 @@ public final class SequencerEngine: @unchecked Sendable {
         let event = SequenceEvent(tick: tick, bank: bank, pad: pad, velocity: velocity)
         events.append(event)
         events.sort { $0.tick < $1.tick }
+        rebuildPlayback()
         lock.unlock()
         onEventRecorded?(event)
     }
@@ -148,13 +185,13 @@ public final class SequencerEngine: @unchecked Sendable {
         if stepChanged { lastReportedStep = currentStep }
 
         // Collect events crossed in (previous, currentLoopTick], handling wrap.
+        // Uses the swing-adjusted playback list.
         var toFire: [SequenceEvent] = []
         if currentLoopTick >= previous {
-            for e in events where e.tick > previous && e.tick <= currentLoopTick { toFire.append(e) }
+            for e in playbackEvents where e.tick > previous && e.tick <= currentLoopTick { toFire.append(e) }
         } else {
-            // Wrapped around the loop boundary.
-            for e in events where e.tick > previous && e.tick < loopLen { toFire.append(e) }
-            for e in events where e.tick >= 0 && e.tick <= currentLoopTick { toFire.append(e) }
+            for e in playbackEvents where e.tick > previous && e.tick < loopLen { toFire.append(e) }
+            for e in playbackEvents where e.tick >= 0 && e.tick <= currentLoopTick { toFire.append(e) }
         }
         lock.unlock()
 

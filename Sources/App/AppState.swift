@@ -146,6 +146,7 @@ final class AppState {
                           numerator: project.timeSigNumerator,
                           denominator: project.timeSigDenominator)
         sequencer.setQuantize(division: seq.quantizeDivision, enabled: true)
+        sequencer.setSwing(seq.swing)
         sequencer.loadEvents(seq.events)
     }
 
@@ -212,6 +213,15 @@ final class AppState {
         set {
             project.sequences[project.activeSequence]?.quantizeDivision = newValue
             sequencer.setQuantize(division: newValue, enabled: true)
+        }
+    }
+
+    /// Swing 0…1 for the active sequence. Live — affects playback immediately.
+    var activeSequenceSwing: Double {
+        get { project.sequences[project.activeSequence]?.swing ?? 0 }
+        set {
+            project.sequences[project.activeSequence]?.swing = newValue
+            sequencer.setSwing(newValue)
         }
     }
 

@@ -63,6 +63,21 @@ struct TransportView: View {
                 .frame(width: 72)
             }
 
+            // Swing — the boom-bap shuffle. 50% straight … ~75% heavy.
+            field(label: "Swing") {
+                HStack(spacing: 6) {
+                    Slider(value: Binding(
+                        get: { state.activeSequenceSwing },
+                        set: { state.activeSequenceSwing = $0 }),
+                        in: 0...1)
+                        .frame(width: 90)
+                    Text(String(format: "%.0f%%", 50 + state.activeSequenceSwing * 25))
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(width: 38)
+                }
+            }
+
             Divider().frame(height: 30).overlay(Color.white.opacity(0.15))
 
             // Playhead
