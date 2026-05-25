@@ -28,6 +28,9 @@ public struct TriggerParams: Sendable, Equatable {
     public var noteOn: Bool = false
     /// Muted: the pad produces no sound when triggered.
     public var muted: Bool = false
+    /// Mute group (0 = off, 1…16). Triggering a pad silences any other pad
+    /// sharing the same group — e.g. a closed hi-hat choking an open one.
+    public var muteGroup: Int = 0
 
     public init() {}
 }
@@ -418,7 +421,21 @@ public final class AudioEngine: @unchecked Sendable {
             return
         }
         if params.loop { loopingPads.insert(pad) }
+
+        // Mute-group choke: collect other pads sharing this group so we can
+        // silence them (e.g. closed hat cuts open hat).
+        var chokeTargets: [AVAudioPlayerNode] = []
+        if params.muteGroup != 0 {
+            for (other, op) in padParams where other != pad && op.muteGroup == params.muteGroup {
+                if let node = padPlayers[other] {
+                    chokeTargets.append(node)
+                    loopingPads.remove(other)
+                }
+            }
+        }
         lock.unlock()
+
+        for node in chokeTargets { node.stop() }
 
         let vel = max(0, min(1, Float(velocity) / 127.0))
         player.volume = params.gain * vel

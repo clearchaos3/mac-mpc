@@ -641,6 +641,7 @@ final class AppState {
         params.loop = p.loop
         params.noteOn = p.noteOn
         params.muted = p.muted
+        params.muteGroup = p.muteGroup
         audio.setTriggerParams(params, for: pad)
     }
 
