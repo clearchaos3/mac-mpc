@@ -34,6 +34,10 @@ struct ContentView: View {
             LoFiView()
                 .environment(state)
         }
+        .sheet(isPresented: $state.isSongOpen) {
+            SongView()
+                .environment(state)
+        }
     }
 
     private var padPlay: some View {
@@ -171,6 +175,14 @@ struct ContentView: View {
             .tint(state.padFXActive ? .orange : nil)
             .buttonStyle(.borderedProminent)
             .opacity(state.padFXActive ? 1 : 0.85)
+
+            Button {
+                state.isSongOpen = true
+            } label: {
+                Label("Song", systemImage: "music.note.list")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .controlSize(.large)
 
             Text(state.selectedPad.description)
                 .font(.system(.body, design: .monospaced, weight: .heavy))

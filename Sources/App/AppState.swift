@@ -52,6 +52,10 @@ final class AppState {
     var transport: SequencerEngine.Transport = .stopped
     var playheadTick: Int = 0
 
+    /// Song mode: sheet visibility + index of the currently-playing entry.
+    var isSongOpen: Bool = false
+    var currentSongIndex: Int = 0
+
     /// Master compressor sheet visibility.
     var isCompressorOpen: Bool = false
 
@@ -140,6 +144,76 @@ final class AppState {
                 self?.project.sequences[self?.project.activeSequence ?? PadAddress(bank: .A, pad: PadIndex(0))]?.events.append(event)
             }
         }
+        sequencer.onSongAdvance = { [weak self] idx in
+            Task { @MainActor in self?.currentSongIndex = idx }
+        }
+    }
+
+    // MARK: - Song mode
+
+    func insertIntoSong(_ addr: PadAddress) {
+        project.song.append(addr)
+        lastEvent = "Song: added \(addr)"
+    }
+
+    func removeFromSong(at index: Int) {
+        guard project.song.indices.contains(index) else { return }
+        project.song.remove(at: index)
+    }
+
+    func clearSong() { project.song.removeAll() }
+
+    /// Play the song: build engine entries from each referenced sequence.
+    func playSong() {
+        let entries: [SequencerEngine.SongEntry] = project.song.compactMap { addr in
+            guard let seq = project.sequences[addr] else { return nil }
+            return SequencerEngine.SongEntry(
+                events: seq.events,
+                bars: seq.bars,
+                bpm: seq.bpm,
+                swing: seq.swing,
+                numerator: project.timeSigNumerator,
+                denominator: project.timeSigDenominator)
+        }
+        guard !entries.isEmpty else { lastEvent = "Song is empty"; return }
+        currentSongIndex = 0
+        sequencer.playSong(entries)
+    }
+
+    /// Flatten the song into a single new sequence placed in the first empty
+    /// slot — concatenating each entry's events at its bar offset.
+    func flattenSongToNewSequence() {
+        guard !project.song.isEmpty else { lastEvent = "Song is empty"; return }
+        var flat = MMSequence()
+        var tickOffset = 0
+        var totalBars = 0
+        for addr in project.song {
+            guard let seq = project.sequences[addr] else { continue }
+            for e in seq.events {
+                var shifted = e
+                shifted.tick += tickOffset
+                flat.events.append(shifted)
+            }
+            let barTicks = project.timeSigNumerator * (Timing.ticksPerQuarter * 4 / project.timeSigDenominator)
+            tickOffset += seq.bars * barTicks
+            totalBars += seq.bars
+        }
+        flat.bars = max(1, min(128, totalBars))
+        flat.bpm = project.sequences[project.song.first!]?.bpm ?? project.globalBPM
+        flat.name = "Song Flat"
+        // Find the first empty sequence slot.
+        for bank in BankIndex.allCases {
+            for i in 0..<16 {
+                let slot = PadAddress(bank: bank, pad: PadIndex(i))
+                if project.sequences[slot]?.isEmpty ?? true {
+                    project.sequences[slot] = flat
+                    project.activeSequence = slot
+                    lastEvent = "Flattened song → \(slot) (\(flat.bars) bars)"
+                    return
+                }
+            }
+        }
+        lastEvent = "No empty sequence slot for flatten"
     }
 
     /// Push tempo / loop length / quantize from the active sequence into the engine.

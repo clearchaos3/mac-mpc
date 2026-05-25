@@ -28,6 +28,9 @@ public struct Project: Hashable, Codable, Sendable {
     /// Master-bus lo-fi character.
     public var lofi = LoFiSettings()
 
+    /// Song: an ordered list of sequence slots to play back as a track.
+    public var song: [PadAddress] = []
+
     public init() {
         self.activeSequence = PadAddress(bank: .A, pad: PadIndex(0))
         for bank in BankIndex.allCases {

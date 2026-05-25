@@ -19,13 +19,31 @@ public final class SequencerEngine: @unchecked Sendable {
     public enum Transport: Sendable, Equatable { case stopped, playing, recording }
     public enum Metronome: Sendable, Equatable { case off, on, recordOnly }
 
+    /// One step of a song: a sequence's events + its timing.
+    public struct SongEntry: Sendable {
+        public var events: [SequenceEvent]
+        public var bars: Int
+        public var bpm: Double
+        public var swing: Double
+        public var numerator: Int
+        public var denominator: Int
+        public init(events: [SequenceEvent], bars: Int, bpm: Double, swing: Double,
+                    numerator: Int, denominator: Int) {
+            self.events = events; self.bars = bars; self.bpm = bpm; self.swing = swing
+            self.numerator = numerator; self.denominator = denominator
+        }
+    }
+
     public typealias PlayheadHandler = @Sendable (Int) -> Void
     public typealias TransportHandler = @Sendable (Transport) -> Void
     public typealias EventHandler = @Sendable (SequenceEvent) -> Void
+    public typealias SongAdvanceHandler = @Sendable (Int) -> Void
 
     public var onPlayhead: PlayheadHandler?
     public var onTransport: TransportHandler?
     public var onEventRecorded: EventHandler?
+    /// Fired when song playback advances to a new entry (passes its index).
+    public var onSongAdvance: SongAdvanceHandler?
 
     private let audio: AudioEngine
     private let lock = NSLock()
@@ -45,6 +63,12 @@ public final class SequencerEngine: @unchecked Sendable {
     /// Events with swing applied to their ticks — what playback actually
     /// fires. Rebuilt from `events` whenever events or swing change.
     private var playbackEvents: [SequenceEvent] = []
+
+    // Song playback: when non-nil, the loop boundary advances to the next
+    // entry instead of repeating.
+    private var songEntries: [SongEntry]?
+    private var songIndex: Int = 0
+    private var songLoops: Bool = false
 
     private var numerator: Int = 4
     private var metronome: Metronome = .off
@@ -135,14 +159,47 @@ public final class SequencerEngine: @unchecked Sendable {
 
     // MARK: - Transport
 
-    public func play() { begin(.playing) }
-    public func record() { begin(.recording) }
+    public func play() {
+        lock.lock(); songEntries = nil; lock.unlock()
+        begin(.playing)
+    }
+    public func record() {
+        lock.lock(); songEntries = nil; lock.unlock()
+        begin(.recording)
+    }
+
+    /// Play an ordered list of sequences as a song, auto-advancing at each
+    /// loop boundary. Stops at the end unless `loop` is true.
+    public func playSong(_ entries: [SongEntry], loop: Bool = false) {
+        guard !entries.isEmpty else { return }
+        lock.lock()
+        songEntries = entries
+        songIndex = 0
+        songLoops = loop
+        loadSongEntryLocked(0)
+        lock.unlock()
+        onSongAdvance?(0)
+        begin(.playing)
+    }
+
+    /// Load a song entry's events + timing. Caller must hold `lock`.
+    private func loadSongEntryLocked(_ i: Int) {
+        guard let entries = songEntries, entries.indices.contains(i) else { return }
+        let e = entries[i]
+        bpm = max(20, min(300, e.bpm))
+        numerator = e.numerator
+        loopLengthTicks = Timing.loopLengthTicks(bars: e.bars, numerator: e.numerator, denominator: e.denominator)
+        swing = max(0, min(1, e.swing))
+        events = e.events.sorted { $0.tick < $1.tick }
+        rebuildPlayback()
+    }
 
     public func stop() {
         lock.lock()
         transport = .stopped
         timer?.cancel()
         timer = nil
+        songEntries = nil
         lock.unlock()
         audio.stopAll()
         onTransport?(.stopped)
@@ -243,6 +300,31 @@ public final class SequencerEngine: @unchecked Sendable {
         let absoluteTick = spt > 0 ? Int(elapsed / spt) : 0
         let currentLoopTick = absoluteTick % loopLen
         let previous = lastLoopTick
+
+        // Song mode: on a loop wrap, advance to the next entry (clean seam at
+        // tick 0; quantized events sit well before the boundary so nothing
+        // audible is lost in the sub-tick tail).
+        if let entries = songEntries, currentLoopTick < previous {
+            var next = songIndex + 1
+            if next >= entries.count {
+                if songLoops { next = 0 }
+                else {
+                    lock.unlock()
+                    stop()
+                    return
+                }
+            }
+            songIndex = next
+            loadSongEntryLocked(next)
+            startHostSeconds = nowSeconds()
+            lastLoopTick = 0
+            lastReportedStep = -1
+            lastClickedBeat = -1
+            lock.unlock()
+            onSongAdvance?(next)
+            return
+        }
+
         lastLoopTick = currentLoopTick
         let stepSize = Timing.ticksPerStep(division: quantizeDivision)
         let currentStep = currentLoopTick / max(1, stepSize)
