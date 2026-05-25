@@ -3,7 +3,8 @@ import Foundation
 /// A single recorded note event inside a sequence.
 public struct SequenceEvent: Hashable, Codable, Sendable {
     /// Tick position from the start of the sequence. 960 ticks per quarter
-    /// note (AKAI convention); a 1/16th step is 240 ticks. See `Timing`.
+    /// note (classic hardware-sampler convention); a 1/16th step is 240
+    /// ticks. See `Timing`.
     public var tick: Int
     public var bank: BankIndex
     public var pad: PadIndex

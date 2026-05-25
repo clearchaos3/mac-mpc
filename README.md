@@ -1,12 +1,13 @@
 # mac-mpc
 
-A native macOS sampler / sequencer that recreates the Akai MPC Sample workflow,
-driven by a **DJ TechTools Midi Fighter 64** + **Korg nanoKONTROL** (original).
+A native macOS sampler / sequencer modeled on the classic 16-pad
+hardware-sampler workflow, driven by a **DJ TechTools Midi Fighter 64** +
+**Korg nanoKONTROL** (original).
 
-The goal is full feature parity with the MPC Sample: sample editing,
+The goal is a faithful recreation of that workflow: sample editing,
 16 sequences × 8 banks, Pad FX / Knob FX / Flex Beat, Chop mode, 16 Levels,
-Warp time-stretch, Song mode, Color Compressor — all driven by your existing
-controllers.
+Warp time-stretch, Song mode, a color compressor, and lo-fi character — all
+driven by your existing controllers.
 
 ## Stack
 

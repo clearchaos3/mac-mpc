@@ -1,6 +1,7 @@
 import Foundation
 
-/// Tick/tempo math. AKAI MPC convention is 960 pulses per quarter note.
+/// Tick/tempo math. Uses the classic hardware-sampler resolution of 960
+/// pulses per quarter note.
 public enum Timing {
     public static let ticksPerQuarter = 960
 
