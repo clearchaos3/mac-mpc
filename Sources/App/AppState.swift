@@ -66,6 +66,43 @@ final class AppState {
         audio.setKnobFX(knobFXType, k1: knobFXK1, k2: knobFXK2, k3: knobFXK3)
     }
 
+    // MARK: - Pad FX mode
+
+    /// When active, pad presses toggle momentary master effects instead of
+    /// playing samples. v1 maps the first six pads to the available master
+    /// effects (full 16-effect DSP + simultaneity still to come).
+    var padFXActive: Bool = false
+    /// Which pad's effect is currently engaged (nil = none).
+    var activePadFX: Int?
+
+    static let padFXMap: [Int: KnobFXType] = [
+        0: .lowpass, 1: .highpass, 2: .bandpass,
+        3: .delay,   4: .reverb,   5: .distortion,
+    ]
+
+    func togglePadFXMode() {
+        padFXActive.toggle()
+        audio.setPlaybackEnabled(!padFXActive)
+        if !padFXActive {
+            // Leaving the mode clears any engaged effect.
+            activePadFX = nil
+            knobFXType = .none
+        }
+        lastEvent = padFXActive ? "Pad FX mode ON" : "Pad FX mode OFF"
+    }
+
+    /// Toggle the effect mapped to a pad index (0-15).
+    private func handlePadFXPress(_ index: Int) {
+        guard let fx = Self.padFXMap[index] else { return }
+        if activePadFX == index {
+            activePadFX = nil
+            knobFXType = .none
+        } else {
+            activePadFX = index
+            knobFXType = fx   // didSet applies it with current K1-K3
+        }
+    }
+
     var lastEvent: String = "—"
 
     enum ConnectionStatus: Equatable {
@@ -191,6 +228,10 @@ final class AppState {
     // MARK: - Pad operations
 
     func selectAndTrigger(_ pad: PadAddress, velocity: UInt8 = 127) {
+        if padFXActive {
+            handlePadFXPress(pad.pad.raw)
+            return
+        }
         selectedPad = pad
         audio.triggerPad(pad, velocity: velocity)
         sequencer.recordHit(bank: pad.bank, pad: pad.pad, velocity: velocity)
@@ -685,7 +726,12 @@ final class AppState {
             mf64Status = .disconnected
         case .padPressed(let coord, _, let vel):
             pressedCoords.insert(coord)
-            selectedPad = PadMapping.address(for: coord)
+            let addr = PadMapping.address(for: coord)
+            if padFXActive {
+                handlePadFXPress(addr.pad.raw)
+            } else {
+                selectedPad = addr
+            }
             lastEvent = "MF64 press \(coord) vel \(vel)"
         case .padReleased(let coord, _):
             pressedCoords.remove(coord)

@@ -108,6 +108,18 @@ struct ContentView: View {
             }
             .controlSize(.large)
 
+            Button {
+                state.togglePadFXMode()
+            } label: {
+                Label("Pad FX", systemImage: "square.grid.3x3.middle.filled")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(state.padFXActive ? Color.black : Color.white)
+            }
+            .controlSize(.large)
+            .tint(state.padFXActive ? .orange : nil)
+            .buttonStyle(.borderedProminent)
+            .opacity(state.padFXActive ? 1 : 0.85)
+
             Text(state.selectedPad.description)
                 .font(.system(.body, design: .monospaced, weight: .heavy))
                 .foregroundStyle(.yellow)

@@ -67,6 +67,9 @@ public final class AudioEngine: @unchecked Sendable {
     /// Buffer actually scheduled on trigger (sliced/reversed per params).
     private var padPlayable: [PadAddress: AVAudioPCMBuffer] = [:]
     private var padParams: [PadAddress: TriggerParams] = [:]
+    /// When false, triggerPad no-ops — used to suppress sample playback while
+    /// Pad FX mode repurposes the pads as effect triggers.
+    private var playbackEnabled = true
 
     private let previewPlayer = AVAudioPlayerNode()
     private var previewFormat: AVAudioFormat?
@@ -290,10 +293,16 @@ public final class AudioEngine: @unchecked Sendable {
         return dest
     }
 
+    /// Enable/disable sample playback (Pad FX mode disables it).
+    public func setPlaybackEnabled(_ enabled: Bool) {
+        lock.lock(); playbackEnabled = enabled; lock.unlock()
+    }
+
     /// Trigger a pad. Safe from any thread (including the CoreMIDI thread).
     public func triggerPad(_ pad: PadAddress, velocity: UInt8) {
         lock.lock()
-        guard let player = padPlayers[pad],
+        guard playbackEnabled,
+              let player = padPlayers[pad],
               let playable = padPlayable[pad] else {
             lock.unlock()
             return
