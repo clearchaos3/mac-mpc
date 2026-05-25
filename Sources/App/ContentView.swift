@@ -29,6 +29,10 @@ struct ContentView: View {
             KnobFXView()
                 .environment(state)
         }
+        .sheet(isPresented: $state.isLoFiOpen) {
+            LoFiView()
+                .environment(state)
+        }
     }
 
     private var header: some View {
@@ -106,6 +110,15 @@ struct ContentView: View {
             } label: {
                 Label("Comp", systemImage: "waveform.badge.minus")
                     .font(.system(.body, design: .monospaced))
+            }
+            .controlSize(.large)
+
+            Button {
+                state.isLoFiOpen = true
+            } label: {
+                Label("Lo-Fi", systemImage: "circle.dotted")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(state.lofiBinding.enabled ? Color.orange : Color.white)
             }
             .controlSize(.large)
 

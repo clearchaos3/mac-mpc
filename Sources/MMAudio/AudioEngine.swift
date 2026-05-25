@@ -99,6 +99,13 @@ public final class AudioEngine: @unchecked Sendable {
     private let fxDistortion = AVAudioUnitDistortion()
     private let fxEQ = AVAudioUnitEQ(numberOfBands: 1)
 
+    // Lo-fi master section: tone (lowpass) + drive (saturation), plus a
+    // looping vinyl-crackle bed mixed straight into the main output.
+    private let lofiEQ = AVAudioUnitEQ(numberOfBands: 1)
+    private let lofiDrive = AVAudioUnitDistortion()
+    private let cracklePlayer = AVAudioPlayerNode()
+    private var crackleBuffer: AVAudioPCMBuffer?
+
     private let lock = NSLock()
 
     public init() {
@@ -111,14 +118,28 @@ public final class AudioEngine: @unchecked Sendable {
         [fxDelay, fxReverb, fxDistortion, fxEQ].forEach { $0.bypass = true }
         compressor.bypass = true
 
+        engine.attach(lofiDrive)
+        engine.attach(lofiEQ)
+        engine.attach(cracklePlayer)
+        lofiDrive.bypass = true
+        lofiEQ.bypass = true
+
         let fmt = engine.mainMixerNode.outputFormat(forBus: 0)
-        // masterMixer → delay → reverb → distortion → eq → compressor → main
+        // masterMixer → delay → reverb → distortion → eq → lofiDrive →
+        //   lofiEQ → compressor → main
         engine.connect(masterMixer, to: fxDelay, format: fmt)
         engine.connect(fxDelay, to: fxReverb, format: fmt)
         engine.connect(fxReverb, to: fxDistortion, format: fmt)
         engine.connect(fxDistortion, to: fxEQ, format: fmt)
-        engine.connect(fxEQ, to: compressor, format: fmt)
+        engine.connect(fxEQ, to: lofiDrive, format: fmt)
+        engine.connect(lofiDrive, to: lofiEQ, format: fmt)
+        engine.connect(lofiEQ, to: compressor, format: fmt)
         engine.connect(compressor, to: engine.mainMixerNode, format: fmt)
+
+        // Vinyl crackle bed → straight to the main mixer (raw, on top).
+        crackleBuffer = Self.makeCrackle(format: fmt)
+        engine.connect(cracklePlayer, to: engine.mainMixerNode, format: fmt)
+        cracklePlayer.volume = 0
 
         // Reverb defaults to a fully-wet preset; tame it so un-bypassing
         // doesn't drown the mix until the user dials Mix up.
@@ -147,6 +168,34 @@ public final class AudioEngine: @unchecked Sendable {
                 let t = Double(i) / sr
                 let env = exp(-t * 150)
                 p[i] = Float(sin(2 * .pi * freq * t) * env * 0.4)
+            }
+        }
+        return buf
+    }
+
+    /// A ~4-second loopable vinyl-crackle bed: sparse decaying pops over a
+    /// faint noise floor.
+    private static func makeCrackle(format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let sr = format.sampleRate
+        let frames = AVAudioFrameCount(sr * 4.0)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let data = buf.floatChannelData else { return nil }
+        buf.frameLength = frames
+        let n = Int(frames)
+        var rng = SystemRandomNumberGenerator()
+        for ch in 0..<Int(format.channelCount) {
+            let p = data[ch]
+            for i in 0..<n { p[i] = Float.random(in: -0.02...0.02, using: &rng) } // noise floor
+            // Sprinkle ~6 pops/sec, each a short decaying spike.
+            let popCount = Int(sr * 4.0 / sr * 24)
+            for _ in 0..<popCount {
+                let start = Int.random(in: 0..<n, using: &rng)
+                let amp = Float.random(in: 0.1...0.6, using: &rng)
+                let len = Int.random(in: 20...120, using: &rng)
+                for j in 0..<len where start + j < n {
+                    let env = expf(-Float(j) / Float(len) * 6)
+                    p[start + j] += amp * env * (Float.random(in: -1...1, using: &rng))
+                }
             }
         }
         return buf
@@ -473,6 +522,39 @@ public final class AudioEngine: @unchecked Sendable {
             band.bandwidth = Float(0.05 + k2 * 4.95)  // octaves
             band.bypass = false
             band.gain = 0
+        }
+    }
+
+    // MARK: - Lo-Fi master section
+
+    /// Configure the lo-fi section: tone (lowpass), drive (saturation), and
+    /// the vinyl-crackle bed level. Bypassed unless `enabled`.
+    public func setLoFi(_ s: LoFiSettings) {
+        lofiEQ.bypass = !s.enabled
+        lofiDrive.bypass = !s.enabled
+
+        if s.enabled {
+            // Tone: 1 → ~18 kHz (open), 0 → ~800 Hz (dark/dusty), log sweep.
+            let cutoff = Float(800.0 * pow(22.0, max(0, min(1, s.tone))))
+            let band = lofiEQ.bands[0]
+            band.filterType = .lowPass
+            band.frequency = min(cutoff, Float(20000))
+            band.bypass = false
+
+            lofiDrive.loadFactoryPreset(.multiDecimated1)
+            lofiDrive.preGain = Float(-6 + s.drive * 12)        // subtle → gritty
+            lofiDrive.wetDryMix = Float(s.drive * 60)           // keep it tasteful
+        }
+
+        // Crackle bed.
+        cracklePlayer.volume = Float(s.enabled ? s.noise * 0.5 : 0)
+        if s.enabled, s.noise > 0, let buf = crackleBuffer {
+            if !cracklePlayer.isPlaying {
+                cracklePlayer.scheduleBuffer(buf, at: nil, options: [.loops], completionHandler: nil)
+                cracklePlayer.play()
+            }
+        } else {
+            cracklePlayer.stop()
         }
     }
 

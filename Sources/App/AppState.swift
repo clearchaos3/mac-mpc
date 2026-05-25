@@ -271,6 +271,20 @@ final class AppState {
         }
     }
 
+    // MARK: - Lo-Fi
+
+    var isLoFiOpen: Bool = false
+
+    func applyLoFi() { audio.setLoFi(project.lofi) }
+
+    var lofiBinding: LoFiSettings {
+        get { project.lofi }
+        set {
+            project.lofi = newValue
+            applyLoFi()
+        }
+    }
+
     // MARK: - Project save / load
 
     var currentProjectURL: URL?
@@ -337,6 +351,7 @@ final class AppState {
             recomputeWaveform()
             refreshMF64LEDs()
             applyCompressor()
+            applyLoFi()
             lastEvent = "Loaded \(project.name)"
         } catch {
             lastEvent = "Load failed: \(error.localizedDescription)"
