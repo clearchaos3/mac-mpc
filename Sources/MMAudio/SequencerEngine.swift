@@ -17,6 +17,7 @@ import MMModels
 public final class SequencerEngine: @unchecked Sendable {
 
     public enum Transport: Sendable, Equatable { case stopped, playing, recording }
+    public enum Metronome: Sendable, Equatable { case off, on, recordOnly }
 
     public typealias PlayheadHandler = @Sendable (Int) -> Void
     public typealias TransportHandler = @Sendable (Transport) -> Void
@@ -45,11 +46,19 @@ public final class SequencerEngine: @unchecked Sendable {
     /// fires. Rebuilt from `events` whenever events or swing change.
     private var playbackEvents: [SequenceEvent] = []
 
+    private var numerator: Int = 4
+    private var metronome: Metronome = .off
+    private var countInEnabled: Bool = false
+    private var countingIn: Bool = false
+    private var countInDurationSec: Double = 0
+
     private var startHostSeconds: Double = 0
     private var lastLoopTick: Int = 0
     /// Last step index reported to `onPlayhead`, to throttle UI updates to
     /// step granularity instead of every 2ms tick.
     private var lastReportedStep: Int = -1
+    /// Last beat index a click fired on (-1 = none yet this run).
+    private var lastClickedBeat: Int = -1
 
     public init(audio: AudioEngine) {
         self.audio = audio
@@ -63,8 +72,17 @@ public final class SequencerEngine: @unchecked Sendable {
 
     public func setLoop(bars: Int, numerator: Int, denominator: Int) {
         lock.lock()
+        self.numerator = numerator
         loopLengthTicks = Timing.loopLengthTicks(bars: bars, numerator: numerator, denominator: denominator)
         lock.unlock()
+    }
+
+    public func setMetronome(_ m: Metronome) {
+        lock.lock(); metronome = m; lock.unlock()
+    }
+
+    public func setCountIn(_ on: Bool) {
+        lock.lock(); countInEnabled = on; lock.unlock()
     }
 
     public func setQuantize(division: Int, enabled: Bool) {
@@ -136,6 +154,17 @@ public final class SequencerEngine: @unchecked Sendable {
         transport = mode
         startHostSeconds = nowSeconds()
         lastLoopTick = 0
+        lastReportedStep = -1
+        lastClickedBeat = -1
+        // One-bar count-in before recording, if enabled.
+        if mode == .recording && countInEnabled {
+            countingIn = true
+            let secPerTick = Timing.secondsPerTick(bpm: bpm)
+            let oneBarTicks = numerator * Timing.ticksPerQuarter
+            countInDurationSec = secPerTick * Double(oneBarTicks)
+        } else {
+            countingIn = false
+        }
         let t = DispatchSource.makeTimerSource(queue: timerQueue)
         t.schedule(deadline: .now(), repeating: .milliseconds(2), leeway: .milliseconds(1))
         t.setEventHandler { [weak self] in self?.tick() }
@@ -144,6 +173,16 @@ public final class SequencerEngine: @unchecked Sendable {
         lock.unlock()
         t.resume()
         onTransport?(mode)
+    }
+
+    /// Whether the metronome should sound in the current transport state.
+    /// Caller must hold `lock`.
+    private func clickAudible() -> Bool {
+        switch metronome {
+        case .off: return false
+        case .on: return true
+        case .recordOnly: return transport == .recording || countingIn
+        }
     }
 
     // MARK: - Recording input
@@ -174,6 +213,32 @@ public final class SequencerEngine: @unchecked Sendable {
         guard transport != .stopped else { lock.unlock(); return }
         let spt = Timing.secondsPerTick(bpm: bpm)
         let loopLen = max(1, loopLengthTicks)
+        let beatTicks = Timing.ticksPerQuarter
+
+        // Count-in phase: clicks only, no events, no normal playhead.
+        if countingIn {
+            let elapsed = nowSeconds() - startHostSeconds
+            if elapsed >= countInDurationSec {
+                // Count-in done — restart the clock for the real take.
+                countingIn = false
+                startHostSeconds = nowSeconds()
+                lastLoopTick = 0
+                lastReportedStep = -1
+                lastClickedBeat = -1
+                lock.unlock()
+                return
+            }
+            let countTick = spt > 0 ? Int(elapsed / spt) : 0
+            let beat = countTick / beatTicks
+            let audible = clickAudible()
+            let fireClick = beat != lastClickedBeat
+            if fireClick { lastClickedBeat = beat }
+            let accent = beat % max(1, numerator) == 0
+            lock.unlock()
+            if fireClick && audible { audio.playClick(accent: accent) }
+            return
+        }
+
         let elapsed = nowSeconds() - startHostSeconds
         let absoluteTick = spt > 0 ? Int(elapsed / spt) : 0
         let currentLoopTick = absoluteTick % loopLen
@@ -183,6 +248,13 @@ public final class SequencerEngine: @unchecked Sendable {
         let currentStep = currentLoopTick / max(1, stepSize)
         let stepChanged = currentStep != lastReportedStep
         if stepChanged { lastReportedStep = currentStep }
+
+        // Metronome: click when the beat index changes.
+        let beat = absoluteTick / beatTicks
+        let fireClick = beat != lastClickedBeat
+        if fireClick { lastClickedBeat = beat }
+        let accent = (currentLoopTick / beatTicks) % max(1, numerator) == 0
+        let clickOn = clickAudible()
 
         // Collect events crossed in (previous, currentLoopTick], handling wrap.
         // Uses the swing-adjusted playback list.
@@ -195,6 +267,7 @@ public final class SequencerEngine: @unchecked Sendable {
         }
         lock.unlock()
 
+        if fireClick && clickOn { audio.playClick(accent: accent) }
         for e in toFire {
             audio.triggerPad(PadAddress(bank: e.bank, pad: e.pad), velocity: e.velocity)
         }

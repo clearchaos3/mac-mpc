@@ -59,6 +59,27 @@ final class SampleBrowser {
         refresh()
     }
 
+    func navigate(to url: URL) {
+        currentDirectory = url
+        highlightedIndex = 0
+        refresh()
+    }
+
+    /// Quick-jump locations shown in the browser header. Splice appears only
+    /// if `~/Splice` exists.
+    var quickLocations: [(name: String, url: URL)] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var locs: [(String, URL)] = [
+            ("Home", home),
+            ("Music", home.appendingPathComponent("Music", isDirectory: true)),
+        ]
+        let splice = home.appendingPathComponent("Splice", isDirectory: true)
+        if FileManager.default.fileExists(atPath: splice.path) {
+            locs.append(("Splice", splice))
+        }
+        return locs
+    }
+
     func refresh() {
         let fm = FileManager.default
         let contents = (try? fm.contentsOfDirectory(

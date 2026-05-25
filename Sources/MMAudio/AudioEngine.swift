@@ -75,6 +75,12 @@ public final class AudioEngine: @unchecked Sendable {
     private var previewFormat: AVAudioFormat?
     private var previewBuffer: AVAudioPCMBuffer?
 
+    /// Metronome click voice. Routed straight to the main mixer so it
+    /// bypasses the master FX + compressor.
+    private let clickPlayer = AVAudioPlayerNode()
+    private var accentClick: AVAudioPCMBuffer?
+    private var normalClick: AVAudioPCMBuffer?
+
     /// Master-bus compressor (Apple DynamicsProcessor). Bypassed by default.
     private let compressor: AVAudioUnitEffect = {
         let desc = AudioComponentDescription(
@@ -122,6 +128,35 @@ public final class AudioEngine: @unchecked Sendable {
         engine.attach(previewPlayer)
         engine.connect(previewPlayer, to: masterMixer, format: fmt)
         previewFormat = fmt
+
+        engine.attach(clickPlayer)
+        engine.connect(clickPlayer, to: engine.mainMixerNode, format: fmt)
+        accentClick = Self.makeClick(freq: 1500, format: fmt)
+        normalClick = Self.makeClick(freq: 1000, format: fmt)
+    }
+
+    private static func makeClick(freq: Double, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let sr = format.sampleRate
+        let frames = AVAudioFrameCount(sr * 0.03)
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let data = buf.floatChannelData else { return nil }
+        buf.frameLength = frames
+        for ch in 0..<Int(format.channelCount) {
+            let p = data[ch]
+            for i in 0..<Int(frames) {
+                let t = Double(i) / sr
+                let env = exp(-t * 150)
+                p[i] = Float(sin(2 * .pi * freq * t) * env * 0.4)
+            }
+        }
+        return buf
+    }
+
+    /// Fire a metronome click. `accent` = downbeat.
+    public func playClick(accent: Bool) {
+        guard let buf = accent ? accentClick : normalClick else { return }
+        clickPlayer.scheduleBuffer(buf, at: nil, options: [.interrupts], completionHandler: nil)
+        if !clickPlayer.isPlaying { clickPlayer.play() }
     }
 
     public func start() {

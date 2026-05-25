@@ -55,6 +55,10 @@ final class AppState {
     /// Master compressor sheet visibility.
     var isCompressorOpen: Bool = false
 
+    /// Metronome + count-in (recording aids).
+    var metronome: SequencerEngine.Metronome = .off { didSet { sequencer.setMetronome(metronome) } }
+    var countIn: Bool = false { didSet { sequencer.setCountIn(countIn) } }
+
     /// Knob FX (master bus). Session state for now.
     var knobFXType: KnobFXType = .none { didSet { applyKnobFX() } }
     var knobFXK1: Double = 0.5 { didSet { applyKnobFX() } }

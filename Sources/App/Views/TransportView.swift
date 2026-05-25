@@ -52,6 +52,33 @@ struct TransportView: View {
                 .help("Tap tempo")
             }
 
+            // Metronome (Off → On → Rec)
+            field(label: "Metro") {
+                Button {
+                    state.metronome = switch state.metronome {
+                        case .off: .on
+                        case .on: .recordOnly
+                        case .recordOnly: .off
+                    }
+                } label: {
+                    Image(systemName: "metronome")
+                        .foregroundStyle(metroColor)
+                        .frame(width: 22, height: 18)
+                }
+                .controlSize(.large)
+                .help("Metronome: \(metroLabel)")
+            }
+
+            // Count-in
+            field(label: "Count") {
+                Toggle("", isOn: Binding(
+                    get: { state.countIn },
+                    set: { state.countIn = $0 }))
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+            }
+
             // Quantize
             field(label: "Q") {
                 Picker("", selection: Binding(
@@ -129,6 +156,22 @@ struct TransportView: View {
         case .stopped: return .white.opacity(0.6)
         case .playing: return .green
         case .recording: return .red
+        }
+    }
+
+    private var metroColor: Color {
+        switch state.metronome {
+        case .off: return .white.opacity(0.4)
+        case .on: return .green
+        case .recordOnly: return .orange
+        }
+    }
+
+    private var metroLabel: String {
+        switch state.metronome {
+        case .off: return "Off"
+        case .on: return "On"
+        case .recordOnly: return "Record only"
         }
     }
 

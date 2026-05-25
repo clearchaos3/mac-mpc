@@ -8,6 +8,7 @@ struct SampleBrowserView: View {
         let browser = state.browser
         VStack(spacing: 0) {
             header(browser: browser)
+            quickJump(browser: browser)
             Divider().background(Color.white.opacity(0.15))
             list(browser: browser)
             Divider().background(Color.white.opacity(0.15))
@@ -47,6 +48,20 @@ struct SampleBrowserView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private func quickJump(browser: SampleBrowser) -> some View {
+        HStack(spacing: 8) {
+            ForEach(browser.quickLocations, id: \.name) { loc in
+                Button(loc.name) { browser.navigate(to: loc.url) }
+                    .font(.system(.caption, design: .monospaced))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 
     private func list(browser: SampleBrowser) -> some View {
