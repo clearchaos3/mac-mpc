@@ -16,6 +16,11 @@ public struct TriggerParams: Sendable, Equatable {
     public var pitchRatio: Double = 1
     /// Static per-pad filter baked into the playable buffer (nil = bypass).
     public var filter: FilterSpec? = nil
+    /// One-shot amplitude envelope, normalised 0…1. attack = fade-in length
+    /// (0 = instant); decay = tail sustain (1 = rings to natural end, lower =
+    /// shorter fade-out). Baked into the playable buffer.
+    public var ampAttack: Double = 0
+    public var ampDecay: Double = 1
 
     public init() {}
 }
@@ -149,6 +154,8 @@ public final class AudioEngine: @unchecked Sendable {
             || old?.reverse != params.reverse
             || old?.pitchRatio != params.pitchRatio
             || old?.filter != params.filter
+            || old?.ampAttack != params.ampAttack
+            || old?.ampDecay != params.ampDecay
         guard chainChanged || padPlayable[pad] == nil else { return }
 
         padPlayable[pad] = Self.renderPlayable(full: full, params: params)
@@ -175,7 +182,38 @@ public final class AudioEngine: @unchecked Sendable {
                 buf = copy
             }
         }
+        if params.ampAttack > 0.001 || params.ampDecay < 0.999 {
+            // Apply on a mutable copy if we haven't already made one above.
+            let target = (buf === full) ? (copyBuffer(buf) ?? buf) : buf
+            applyAmpEnvelope(target, attack: params.ampAttack, decay: params.ampDecay)
+            buf = target
+        }
         return buf
+    }
+
+    /// Bake a one-shot amplitude envelope into a buffer: a fade-in of
+    /// `attack` (0…1 → 0…1s) and a tail fade-out whose length is
+    /// (1 - decay)·duration (decay = 1 leaves the tail untouched).
+    private static func applyAmpEnvelope(_ buffer: AVAudioPCMBuffer, attack: Double, decay: Double) {
+        guard let data = buffer.floatChannelData else { return }
+        let n = Int(buffer.frameLength)
+        guard n > 1 else { return }
+        let sr = buffer.format.sampleRate
+        let attackSamples = min(n, Int(max(0, attack) * sr))
+        let fadeLen = min(n, Int((1.0 - max(0, min(1, decay))) * Double(n)))
+        let channels = Int(buffer.format.channelCount)
+        for ch in 0..<channels {
+            let p = data[ch]
+            if attackSamples > 1 {
+                for i in 0..<attackSamples { p[i] *= Float(i) / Float(attackSamples) }
+            }
+            if fadeLen > 1 {
+                let startFade = max(0, n - fadeLen)
+                for i in startFade..<n {
+                    p[i] *= Float(n - 1 - i) / Float(fadeLen)
+                }
+            }
+        }
     }
 
     private static func copyBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {

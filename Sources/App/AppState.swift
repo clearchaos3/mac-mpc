@@ -114,6 +114,27 @@ final class AppState {
         if transport == .stopped { playSequence() } else { stopTransport() }
     }
 
+    /// Tap-tempo state: recent tap timestamps (seconds).
+    private var tapTimes: [Double] = []
+
+    /// Register a tempo tap. Averages the last few inter-tap intervals into
+    /// a BPM and applies it to the active sequence. Resets if you pause >2s.
+    func tapTempo() {
+        let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000.0
+        if let last = tapTimes.last, now - last > 2.0 { tapTimes.removeAll() }
+        tapTimes.append(now)
+        if tapTimes.count > 5 { tapTimes.removeFirst(tapTimes.count - 5) }
+        guard tapTimes.count >= 2 else { lastEvent = "Tap…"; return }
+
+        var intervals: [Double] = []
+        for i in 1..<tapTimes.count { intervals.append(tapTimes[i] - tapTimes[i - 1]) }
+        let avg = intervals.reduce(0, +) / Double(intervals.count)
+        guard avg > 0 else { return }
+        let bpm = (60.0 / avg).rounded()
+        activeSequenceBPM = max(20, min(300, bpm))
+        lastEvent = "Tap tempo → \(Int(activeSequenceBPM)) BPM"
+    }
+
     var activeSequenceBPM: Double {
         get { project.sequences[project.activeSequence]?.bpm ?? project.globalBPM }
         set {
@@ -344,6 +365,8 @@ final class AppState {
         params.reverse = p.reverse
         params.pitchRatio = pitchRatio(semi: p.semiTune, fine: p.fineTune)
         params.filter = filterSpec(type: p.filterType, cutoff: p.filterCutoff, resonance: p.filterResonance)
+        params.ampAttack = p.ampAttack
+        params.ampDecay = p.ampDecayOrRelease
         audio.setTriggerParams(params, for: pad)
     }
 

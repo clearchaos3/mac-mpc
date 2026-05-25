@@ -39,6 +39,19 @@ struct TransportView: View {
                 .frame(width: 60)
             }
 
+            // Tap tempo
+            field(label: "Tap") {
+                Button {
+                    state.tapTempo()
+                } label: {
+                    Image(systemName: "hand.tap")
+                        .frame(width: 22, height: 18)
+                }
+                .controlSize(.large)
+                .keyboardShortcut("t", modifiers: [])
+                .help("Tap tempo")
+            }
+
             // Quantize
             field(label: "Q") {
                 Picker("", selection: Binding(
