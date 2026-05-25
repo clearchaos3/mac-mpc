@@ -362,6 +362,40 @@ final class AppState {
         lastEvent = "Chopped into \(made) slices on bank \(bank)"
     }
 
+    enum SixteenLevelsType: String, CaseIterable { case velocity, filter, tune }
+
+    /// 16 Levels: copy the selected pad's sample across all 16 pads of its
+    /// bank, varying one parameter. Tune puts the root on pad 4 (index 3).
+    func applySixteenLevels(_ type: SixteenLevelsType) {
+        guard let src = project.pads[selectedPad], let url = src.sampleURL else {
+            lastEvent = "Load a sample first"
+            return
+        }
+        let bank = selectedPad.bank
+        for i in 0..<16 {
+            let dest = PadAddress(bank: bank, pad: PadIndex(i))
+            try? audio.loadSample(url: url, into: dest)
+            var pad = src
+            pad.sampleURL = url
+            switch type {
+            case .tune:
+                pad.semiTune = i - 3                          // pad 4 (idx 3) = root
+            case .velocity:
+                let frac = Double(i + 1) / 16.0
+                pad.volume_dB = -40.0 * (1.0 - frac)          // soft → full
+            case .filter:
+                pad.filterType = (src.filterType == .off) ? .lpf2 : src.filterType
+                pad.filterCutoff = Double(i) / 15.0           // closed → open
+            }
+            project.pads[dest] = pad
+            syncPadToEngine(dest)
+        }
+        selectedPad = PadAddress(bank: bank, pad: PadIndex(type == .tune ? 3 : 0))
+        recomputeWaveform()
+        refreshMF64LEDs()
+        lastEvent = "16 Levels (\(type.rawValue)) on bank \(bank)"
+    }
+
     private func chopsTempDir() -> URL {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("mac-mpc/chops/\(UUID().uuidString)", isDirectory: true)

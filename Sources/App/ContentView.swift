@@ -80,6 +80,18 @@ struct ContentView: View {
             .fixedSize()
             .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
 
+            Menu {
+                Button("Velocity") { state.applySixteenLevels(.velocity) }
+                Button("Filter")   { state.applySixteenLevels(.filter) }
+                Button("Tune")     { state.applySixteenLevels(.tune) }
+            } label: {
+                Label("16 Lvl", systemImage: "square.grid.4x3.fill")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
+
             Button {
                 state.isCompressorOpen = true
             } label: {
