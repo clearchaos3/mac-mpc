@@ -8,6 +8,10 @@ public enum ChopType: Sendable, Equatable {
     /// Transient-onset detection. `sensitivity` 0…1 — higher = fewer slices
     /// (matches the MPC's "higher threshold → fewer slices").
     case threshold(Double)
+    /// Musical grid: slices of `beatsPerSlice` beats at `bpm`, so chops land
+    /// on bar/beat boundaries where the progression moves. (4 = 1 bar at 4/4,
+    /// 2 = ½ bar, 1 = beat.) The best fit for "chop on the progression".
+    case grid(bpm: Double, beatsPerSlice: Double)
 }
 
 /// Computes slice boundaries for Chop mode. Returns normalised
@@ -26,6 +30,19 @@ public enum Chopper {
             let c = max(1, min(maxSlices, count))
             return (0..<c).map { i in
                 (Double(i) / Double(c), Double(i + 1) / Double(c))
+            }
+
+        case .grid(let bpm, let beatsPerSlice):
+            guard bpm > 0, beatsPerSlice > 0 else { return [(0, 1)] }
+            let sampleRate = buffer.format.sampleRate
+            let totalSec = Double(n) / sampleRate
+            let sliceSec = (60.0 / bpm) * beatsPerSlice
+            guard sliceSec > 0, totalSec > 0 else { return [(0, 1)] }
+            let count = max(1, min(maxSlices, Int((totalSec / sliceSec).rounded(.up))))
+            return (0..<count).map { i in
+                let s = min(1.0, (Double(i) * sliceSec) / totalSec)
+                let e = min(1.0, (Double(i + 1) * sliceSec) / totalSec)
+                return (s, e)
             }
 
         case .threshold(let sensitivity):

@@ -64,14 +64,23 @@ struct ContentView: View {
             .disabled(state.project.pads[state.selectedPad]?.sampleURL == nil)
 
             Menu {
-                Button("Regions: 2")  { state.chopSelectedPad(.regions(2)) }
-                Button("Regions: 4")  { state.chopSelectedPad(.regions(4)) }
-                Button("Regions: 8")  { state.chopSelectedPad(.regions(8)) }
-                Button("Regions: 16") { state.chopSelectedPad(.regions(16)) }
-                Divider()
-                Button("Threshold (more)") { state.chopSelectedPad(.threshold(0.2)) }
-                Button("Threshold (med)")  { state.chopSelectedPad(.threshold(0.5)) }
-                Button("Threshold (fewer)"){ state.chopSelectedPad(.threshold(0.8)) }
+                let bpm = state.activeSequenceBPM
+                Section("Tempo grid (\(Int(bpm)) BPM)") {
+                    Button("1 bar / slice")  { state.chopSelectedPad(.grid(bpm: bpm, beatsPerSlice: 4)) }
+                    Button("½ bar / slice")  { state.chopSelectedPad(.grid(bpm: bpm, beatsPerSlice: 2)) }
+                    Button("1 beat / slice") { state.chopSelectedPad(.grid(bpm: bpm, beatsPerSlice: 1)) }
+                }
+                Section("Equal regions") {
+                    Button("Regions: 2")  { state.chopSelectedPad(.regions(2)) }
+                    Button("Regions: 4")  { state.chopSelectedPad(.regions(4)) }
+                    Button("Regions: 8")  { state.chopSelectedPad(.regions(8)) }
+                    Button("Regions: 16") { state.chopSelectedPad(.regions(16)) }
+                }
+                Section("Transient (rhythmic)") {
+                    Button("Threshold (more)") { state.chopSelectedPad(.threshold(0.2)) }
+                    Button("Threshold (med)")  { state.chopSelectedPad(.threshold(0.5)) }
+                    Button("Threshold (fewer)"){ state.chopSelectedPad(.threshold(0.8)) }
+                }
             } label: {
                 Label("Chop", systemImage: "square.split.2x2")
                     .font(.system(.body, design: .monospaced))

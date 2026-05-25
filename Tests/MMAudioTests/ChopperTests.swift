@@ -29,6 +29,19 @@ struct ChopperTests {
         #expect(slices.count == 16)
     }
 
+    @Test func gridChopsOnTempoBoundaries() {
+        // 2 seconds at 120 BPM = 0.5 s/beat = 4 beats = 1 bar.
+        let sr = 44100.0
+        let buf = buffer(frames: Int(sr * 2.0)) { _ in 0.3 }
+        // 1 beat per slice → 4 slices.
+        let beats = Chopper.slices(buffer: buf, type: .grid(bpm: 120, beatsPerSlice: 1))
+        #expect(beats.count == 4)
+        #expect(abs(beats[1].start - 0.25) < 0.01)   // 2nd slice starts at 0.5s of 2s
+        // 1 bar per slice → 1 slice.
+        let bars = Chopper.slices(buffer: buf, type: .grid(bpm: 120, beatsPerSlice: 4))
+        #expect(bars.count == 1)
+    }
+
     @Test func thresholdFindsTransients() {
         // 4 sharp bursts separated by silence, at 44.1k → ~0.25s apart.
         let sr = 44100.0
