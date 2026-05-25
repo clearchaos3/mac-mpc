@@ -29,7 +29,10 @@ final class AppState {
     /// The pad that's currently the editing focus.
     var selectedPad: PadAddress = PadAddress(bank: .A, pad: PadIndex(0)) {
         didSet {
-            if selectedPad != oldValue { recomputeWaveform() }
+            if selectedPad != oldValue {
+                recomputeWaveform()
+                refreshMF64LEDs()
+            }
         }
     }
 
@@ -195,6 +198,7 @@ final class AppState {
         currentProjectURL = nil
         selectedPad = PadAddress(bank: .A, pad: PadIndex(0))
         recomputeWaveform()
+        refreshMF64LEDs()
         lastEvent = "New project"
     }
 
@@ -247,6 +251,7 @@ final class AppState {
             }
             selectedPad = PadAddress(bank: .A, pad: PadIndex(0))
             recomputeWaveform()
+            refreshMF64LEDs()
             lastEvent = "Loaded \(project.name)"
         } catch {
             lastEvent = "Load failed: \(error.localizedDescription)"
@@ -273,6 +278,7 @@ final class AppState {
             audio.stopPreview()
             recomputeWaveform()
             syncPadToEngine(selectedPad)
+            refreshMF64LEDs()
             lastEvent = "Loaded \(entry.displayName) → \(selectedPad)"
         } catch {
             NSLog("loadSample failed: \(error)")
@@ -322,6 +328,7 @@ final class AppState {
         }
         selectedPad = PadAddress(bank: bank, pad: PadIndex(0))
         recomputeWaveform()
+        refreshMF64LEDs()
         lastEvent = "Chopped into \(made) slices on bank \(bank)"
     }
 
@@ -578,10 +585,38 @@ final class AppState {
         }
     }
 
+    /// Paint the MF64 pad LEDs: selected pad white, loaded pads in their
+    /// bank colour, empty pads off.
+    func refreshMF64LEDs() {
+        guard let mf64, mf64.isConnected else { return }
+        let project = self.project
+        let selected = self.selectedPad
+        mf64.setAllPadColors { coord in
+            let addr = PadMapping.address(for: coord)
+            if addr == selected { return .white }
+            if project.pads[addr]?.sampleURL != nil { return Self.bankColor(addr.bank) }
+            return .off
+        }
+    }
+
+    private static func bankColor(_ bank: BankIndex) -> PadColor {
+        switch bank {
+        case .A: return .red
+        case .B: return .orange
+        case .C: return .yellow
+        case .D: return .green
+        case .E: return .mint
+        case .F: return .cyan
+        case .G: return .blue
+        case .H: return .violet
+        }
+    }
+
     private func handleMF(_ event: MidiFighter64.Event) {
         switch event {
         case .connected(let name):
             mf64Status = .connected(name: name)
+            refreshMF64LEDs()
         case .disconnected:
             mf64Status = .disconnected
         case .padPressed(let coord, _, let vel):
@@ -602,12 +637,48 @@ final class AppState {
             nanoStatus = .connected(name: name)
         case .disconnected:
             nanoStatus = .disconnected
-        case .controlChange(let ch, let cc, let val):
-            lastEvent = "nano CC ch=\(ch) cc=\(cc) val=\(val)"
+        case .controlChange(_, let cc, let val):
+            routeNanoCC(cc: cc, value: val)
         case .note(let ch, let note, let vel, let on):
             lastEvent = "nano \(on ? "on" : "off") ch=\(ch) note=\(note) vel=\(vel)"
         case .sysEx(let bytes):
             lastEvent = "nano SysEx \(bytes.count) bytes"
+        }
+    }
+
+    /// Map an incoming nanoKONTROL CC to a mac-mpc action.
+    /// Knobs/sliders are absolute (0…127) — used directly as normalised
+    /// values (soft-takeover can come later). Transport buttons send 127
+    /// on press, 0 on release; we act on press.
+    private func routeNanoCC(cc: UInt8, value: UInt8) {
+        let norm = Double(value) / 127.0
+        switch cc {
+        case NanoCC.k1: setParameter(at: 0, normalised: norm)
+        case NanoCC.k2: setParameter(at: 1, normalised: norm)
+        case NanoCC.k3: setParameter(at: 2, normalised: norm)
+
+        case NanoCC.dataWheel:
+            // Knob 9 acts as the "data wheel": when the browser is open its
+            // absolute position scrolls the list.
+            if isBrowserOpen, !browser.entries.isEmpty {
+                let idx = Int((norm * Double(browser.entries.count - 1)).rounded())
+                browser.highlightedIndex = max(0, min(browser.entries.count - 1, idx))
+            }
+
+        case NanoCC.fader:
+            // Fader → selected pad volume (default fader assignment).
+            project.pads[selectedPad]?.volume_dB = (norm * 80) - 74
+            syncPadToEngine(selectedPad)
+
+        case NanoCC.play where value == 127:
+            togglePlay()
+        case NanoCC.stop where value == 127:
+            stopTransport()
+        case NanoCC.rec where value == 127:
+            if transport == .recording { stopTransport() } else { recordSequence() }
+
+        default:
+            lastEvent = "nano CC \(cc) = \(value)"
         }
     }
 }
