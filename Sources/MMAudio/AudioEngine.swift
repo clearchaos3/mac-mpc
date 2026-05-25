@@ -11,9 +11,31 @@ public struct TriggerParams: Sendable, Equatable {
     public var gain: Float = 1          // linear, from volume_dB
     public var pan: Float = 0           // -1…+1
     public var reverse: Bool = false
+    /// Playback pitch ratio (2^(semitones/12)). >1 = higher + shorter
+    /// (classic sampler behaviour — also speeds the sample up).
+    public var pitchRatio: Double = 1
+    /// Static per-pad filter baked into the playable buffer (nil = bypass).
+    public var filter: FilterSpec? = nil
 
     public init() {}
 }
+
+/// Static filter description baked into a pad's playable buffer.
+public struct FilterSpec: Sendable, Equatable {
+    public var kind: Biquad.Kind
+    public var cutoffHz: Double
+    public var q: Double
+    public var passes: Int   // 1 = 2-pole, 2 = 4-pole
+
+    public init(kind: Biquad.Kind, cutoffHz: Double, q: Double, passes: Int) {
+        self.kind = kind
+        self.cutoffHz = cutoffHz
+        self.q = q
+        self.passes = passes
+    }
+}
+
+extension Biquad.Kind: Equatable {}
 
 /// AVAudioEngine wrapper sized for an MPC-style sampler.
 ///
@@ -111,8 +133,10 @@ public final class AudioEngine: @unchecked Sendable {
         padPlayable[pad] = newBuffer
     }
 
-    /// Push updated trigger params from the model. Recomputes the playable
-    /// buffer if the slice window or reverse flag changed.
+    /// Push updated trigger params from the model. Recomputes the pad's
+    /// "playable" buffer — source run through the static DSP chain
+    /// (slice → reverse → pitch-resample → filter) — only when a chain
+    /// param actually changed, so the trigger path never does this work.
     public func setTriggerParams(_ params: TriggerParams, for pad: PadAddress) {
         lock.lock()
         defer { lock.unlock() }
@@ -120,20 +144,74 @@ public final class AudioEngine: @unchecked Sendable {
         padParams[pad] = params
         guard let full = padBuffers[pad] else { return }
 
-        let windowChanged = old?.startFraction != params.startFraction
+        let chainChanged = old?.startFraction != params.startFraction
             || old?.endFraction != params.endFraction
             || old?.reverse != params.reverse
-        if windowChanged || padPlayable[pad] == nil {
-            if params.startFraction <= 0 && params.endFraction >= 1 && !params.reverse {
-                padPlayable[pad] = full
-            } else {
-                var slice = AudioEngine.slice(full,
-                                              startFraction: params.startFraction,
-                                              endFraction: params.endFraction) ?? full
-                if params.reverse { slice = AudioEngine.reversed(slice) ?? slice }
-                padPlayable[pad] = slice
+            || old?.pitchRatio != params.pitchRatio
+            || old?.filter != params.filter
+        guard chainChanged || padPlayable[pad] == nil else { return }
+
+        padPlayable[pad] = Self.renderPlayable(full: full, params: params)
+    }
+
+    /// Run the source buffer through the static DSP chain.
+    private static func renderPlayable(full: AVAudioPCMBuffer, params: TriggerParams) -> AVAudioPCMBuffer {
+        var buf = full
+        if params.startFraction > 0 || params.endFraction < 1 {
+            buf = slice(buf, startFraction: params.startFraction, endFraction: params.endFraction) ?? buf
+        }
+        if params.reverse {
+            buf = reversed(buf) ?? buf
+        }
+        if abs(params.pitchRatio - 1.0) > 1e-6 {
+            buf = resampled(buf, ratio: params.pitchRatio) ?? buf
+        }
+        if let f = params.filter {
+            // Filter a mutable copy so the cached source stays clean.
+            if let copy = copyBuffer(buf) {
+                let bq = Biquad.make(kind: f.kind, cutoffHz: f.cutoffHz, q: f.q,
+                                     sampleRate: buf.format.sampleRate)
+                bq.process(copy, passes: f.passes)
+                buf = copy
             }
         }
+        return buf
+    }
+
+    private static func copyBuffer(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let n = source.frameLength
+        guard let dest = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: n),
+              let src = source.floatChannelData, let dst = dest.floatChannelData else { return nil }
+        for ch in 0..<Int(source.format.channelCount) {
+            dst[ch].update(from: src[ch], count: Int(n))
+        }
+        dest.frameLength = n
+        return dest
+    }
+
+    /// Linear-interpolation resample. `ratio` > 1 → higher pitch + shorter
+    /// (output frame count = input / ratio). Same output format as input.
+    public static func resampled(_ source: AVAudioPCMBuffer, ratio: Double) -> AVAudioPCMBuffer? {
+        let inN = Int(source.frameLength)
+        guard inN > 0, ratio > 0,
+              let src = source.floatChannelData else { return nil }
+        let outN = max(1, Int(Double(inN) / ratio))
+        guard let dest = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: AVAudioFrameCount(outN)),
+              let dst = dest.floatChannelData else { return nil }
+        let channels = Int(source.format.channelCount)
+        for ch in 0..<channels {
+            let s = src[ch], d = dst[ch]
+            for i in 0..<outN {
+                let pos = Double(i) * ratio
+                let i0 = Int(pos)
+                let frac = Float(pos - Double(i0))
+                let a = s[min(i0, inN - 1)]
+                let b = s[min(i0 + 1, inN - 1)]
+                d[i] = a + (b - a) * frac
+            }
+        }
+        dest.frameLength = AVAudioFrameCount(outN)
+        return dest
     }
 
     /// Trigger a pad. Safe from any thread (including the CoreMIDI thread).

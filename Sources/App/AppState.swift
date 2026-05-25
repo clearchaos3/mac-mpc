@@ -342,11 +342,38 @@ final class AppState {
         params.gain = gainFromDB(p.volume_dB)
         params.pan = Float(max(-1, min(1, p.pan)))
         params.reverse = p.reverse
+        params.pitchRatio = pitchRatio(semi: p.semiTune, fine: p.fineTune)
+        params.filter = filterSpec(type: p.filterType, cutoff: p.filterCutoff, resonance: p.filterResonance)
         audio.setTriggerParams(params, for: pad)
     }
 
     private func gainFromDB(_ dB: Double) -> Float {
         dB <= -74 ? 0 : Float(pow(10.0, dB / 20.0))
+    }
+
+    private func pitchRatio(semi: Int, fine: Int) -> Double {
+        let semitones = Double(semi) + Double(fine) / 100.0
+        return pow(2.0, semitones / 12.0)
+    }
+
+    /// Map a pad's filter settings to a bakeable FilterSpec (nil = bypass).
+    /// Cutoff is a log sweep 20 Hz … 20 kHz; resonance maps to Q 0.7 … 12.
+    private func filterSpec(type: Pad.FilterType, cutoff: Double, resonance: Double) -> FilterSpec? {
+        let kind: Biquad.Kind
+        let passes: Int
+        switch type {
+        case .off:                    return nil
+        case .classic, .lpf2:         kind = .lowpass;  passes = 1
+        case .lpf4:                   kind = .lowpass;  passes = 2
+        case .hpf2:                   kind = .highpass; passes = 1
+        case .hpf4:                   kind = .highpass; passes = 2
+        case .bpf2:                   kind = .bandpass; passes = 1
+        case .bpf4:                   kind = .bandpass; passes = 2
+        }
+        let c = max(0, min(1, cutoff))
+        let cutoffHz = 20.0 * pow(1000.0, c)          // 20 Hz … 20 kHz
+        let q = 0.7 + max(0, min(1, resonance)) * 11.3 // 0.7 … 12
+        return FilterSpec(kind: kind, cutoffHz: cutoffHz, q: q, passes: passes)
     }
 
     private func recomputeWaveform() {
