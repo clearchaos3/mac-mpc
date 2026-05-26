@@ -642,6 +642,7 @@ final class AppState {
         params.noteOn = p.noteOn
         params.muted = p.muted
         params.muteGroup = p.muteGroup
+        params.polyphony = p.polyphony
         audio.setTriggerParams(params, for: pad)
     }
 

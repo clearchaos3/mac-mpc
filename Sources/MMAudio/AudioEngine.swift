@@ -31,6 +31,8 @@ public struct TriggerParams: Sendable, Equatable {
     /// Mute group (0 = off, 1…16). Triggering a pad silences any other pad
     /// sharing the same group — e.g. a closed hi-hat choking an open one.
     public var muteGroup: Int = 0
+    /// Mono restarts a single voice; Poly overlaps across the voice ring.
+    public var polyphony: Pad.Polyphony = .mono
 
     public init() {}
 }
@@ -70,7 +72,13 @@ public final class AudioEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let masterMixer = AVAudioMixerNode()
 
-    private var padPlayers: [PadAddress: AVAudioPlayerNode] = [:]
+    /// Voices per pad. Mono playback uses voice 0; Poly rotates through the
+    /// ring so repeated hits overlap instead of cutting each other.
+    private static let voicesPerPad = 6
+    /// Ring of player nodes per pad (lazily created on load).
+    private var padVoices: [PadAddress: [AVAudioPlayerNode]] = [:]
+    /// Next voice index to use for Poly rotation, per pad.
+    private var padVoiceIndex: [PadAddress: Int] = [:]
     /// Full decoded buffer (source of truth for waveform + slicing).
     private var padBuffers: [PadAddress: AVAudioPCMBuffer] = [:]
     /// Buffer actually scheduled on trigger (sliced/reversed per params).
@@ -240,13 +248,14 @@ public final class AudioEngine: @unchecked Sendable {
 
     public func clearPad(_ pad: PadAddress) {
         lock.lock()
-        if let existing = padPlayers.removeValue(forKey: pad) {
-            existing.stop()
-            engine.detach(existing)
+        if let ring = padVoices.removeValue(forKey: pad) {
+            for v in ring { v.stop(); engine.detach(v) }
         }
+        padVoiceIndex.removeValue(forKey: pad)
         padBuffers.removeValue(forKey: pad)
         padPlayable.removeValue(forKey: pad)
         padParams.removeValue(forKey: pad)
+        loopingPads.remove(pad)
         lock.unlock()
     }
 
@@ -403,7 +412,7 @@ public final class AudioEngine: @unchecked Sendable {
     public func triggerPad(_ pad: PadAddress, velocity: UInt8) {
         lock.lock()
         guard playbackEnabled,
-              let player = padPlayers[pad],
+              let ring = padVoices[pad], !ring.isEmpty,
               let playable = padPlayable[pad] else {
             lock.unlock()
             return
@@ -413,22 +422,31 @@ public final class AudioEngine: @unchecked Sendable {
         // Muted pads produce no sound.
         if params.muted { lock.unlock(); return }
 
-        // Loop pads that aren't gated toggle on repeated taps.
+        // Loop pads that aren't gated toggle on repeated taps (stop the ring).
         if params.loop && !params.noteOn && loopingPads.contains(pad) {
             loopingPads.remove(pad)
             lock.unlock()
-            player.stop()
+            for v in ring { v.stop() }
             return
         }
         if params.loop { loopingPads.insert(pad) }
 
-        // Mute-group choke: collect other pads sharing this group so we can
-        // silence them (e.g. closed hat cuts open hat).
+        // Pick the voice: Mono (or loop) always uses voice 0; Poly rotates.
+        let voice: AVAudioPlayerNode
+        if params.polyphony == .poly && !params.loop {
+            let idx = (padVoiceIndex[pad] ?? 0) % ring.count
+            padVoiceIndex[pad] = (idx + 1) % ring.count
+            voice = ring[idx]
+        } else {
+            voice = ring[0]
+        }
+
+        // Mute-group choke: silence all voices of sibling pads in the group.
         var chokeTargets: [AVAudioPlayerNode] = []
         if params.muteGroup != 0 {
             for (other, op) in padParams where other != pad && op.muteGroup == params.muteGroup {
-                if let node = padPlayers[other] {
-                    chokeTargets.append(node)
+                if let otherRing = padVoices[other] {
+                    chokeTargets.append(contentsOf: otherRing)
                     loopingPads.remove(other)
                 }
             }
@@ -438,24 +456,27 @@ public final class AudioEngine: @unchecked Sendable {
         for node in chokeTargets { node.stop() }
 
         let vel = max(0, min(1, Float(velocity) / 127.0))
-        player.volume = params.gain * vel
-        player.pan = max(-1, min(1, params.pan))
+        voice.volume = params.gain * vel
+        voice.pan = max(-1, min(1, params.pan))
         let options: AVAudioPlayerNodeBufferOptions = params.loop ? [.interrupts, .loops] : [.interrupts]
-        player.scheduleBuffer(playable, at: nil, options: options, completionHandler: nil)
-        if !player.isPlaying { player.play() }
+        voice.scheduleBuffer(playable, at: nil, options: options, completionHandler: nil)
+        if !voice.isPlaying { voice.play() }
     }
 
     public func stopPad(_ pad: PadAddress) {
         lock.lock()
-        let player = padPlayers[pad]
+        let ring = padVoices[pad]
         loopingPads.remove(pad)
         lock.unlock()
-        player?.stop()
+        ring?.forEach { $0.stop() }
     }
 
     public func stopAll() {
-        lock.lock(); let players = Array(padPlayers.values); loopingPads.removeAll(); lock.unlock()
-        for p in players { p.stop() }
+        lock.lock()
+        let all = padVoices.values.flatMap { $0 }
+        loopingPads.removeAll()
+        lock.unlock()
+        for v in all { v.stop() }
         previewPlayer.stop()
     }
 
@@ -650,22 +671,29 @@ public final class AudioEngine: @unchecked Sendable {
 
     // MARK: - Private
 
-    /// Attach + connect a player node for a pad if one doesn't exist.
+    /// Attach + connect the voice ring for a pad if it doesn't exist.
     /// Caller must hold `lock`.
     private func attachPlayerIfNeeded(_ pad: PadAddress,
                                       format: AVAudioFormat,
                                       reconnectIfFormatChanged: Bool = false) {
-        if let existing = padPlayers[pad] {
-            existing.stop()
-            if reconnectIfFormatChanged, existing.outputFormat(forBus: 0) != format {
-                engine.disconnectNodeOutput(existing)
-                engine.connect(existing, to: masterMixer, format: format)
+        if let existing = padVoices[pad] {
+            for v in existing {
+                v.stop()
+                if reconnectIfFormatChanged, v.outputFormat(forBus: 0) != format {
+                    engine.disconnectNodeOutput(v)
+                    engine.connect(v, to: masterMixer, format: format)
+                }
             }
             return
         }
-        let player = AVAudioPlayerNode()
-        engine.attach(player)
-        engine.connect(player, to: masterMixer, format: format)
-        padPlayers[pad] = player
+        var ring: [AVAudioPlayerNode] = []
+        for _ in 0..<Self.voicesPerPad {
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: masterMixer, format: format)
+            ring.append(player)
+        }
+        padVoices[pad] = ring
+        padVoiceIndex[pad] = 0
     }
 }
