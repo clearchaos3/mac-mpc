@@ -189,11 +189,19 @@ public final class MidiFighter64: @unchecked Sendable {
 
     // MARK: - Send: pad LEDs
 
+    /// Per the MF64 user guide, a Note-On of **velocity 0 disables MIDI
+    /// control of color** — the device reverts to its own factory-configured
+    /// per-pad color (the stray blues/purples/teals on "empty" pads). We
+    /// never want that, so clamp every LED send to a minimum of 1 and keep
+    /// the app in full control of every ring.
+    @inline(__always)
+    private func ledVelocity(_ paletteIndex: UInt8) -> UInt8 { max(1, paletteIndex) }
+
     public func setPadColor(pad: PadCoord, color: PadColor) {
         guard connected else { return }
         let note = MFNoteMap.note(for: pad)
         let status: UInt8 = 0x90 | (config.ledChannel & 0x0F)
-        sendMIDIBytes([status, note, color.paletteIndex], port: outputPort, destination: destination)
+        sendMIDIBytes([status, note, ledVelocity(color.paletteIndex)], port: outputPort, destination: destination)
     }
 
     public func setAllPadColors(_ colorFor: (PadCoord) -> PadColor) {
@@ -206,7 +214,7 @@ public final class MidiFighter64: @unchecked Sendable {
                 let pad = PadCoord(row: row, col: col)
                 bytes.append(status)
                 bytes.append(MFNoteMap.note(for: pad))
-                bytes.append(colorFor(pad).paletteIndex)
+                bytes.append(ledVelocity(colorFor(pad).paletteIndex))
             }
         }
         sendMIDIBytes(bytes, port: outputPort, destination: destination)

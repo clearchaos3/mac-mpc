@@ -38,12 +38,16 @@ public final class SequencerEngine: @unchecked Sendable {
     public typealias TransportHandler = @Sendable (Transport) -> Void
     public typealias EventHandler = @Sendable (SequenceEvent) -> Void
     public typealias SongAdvanceHandler = @Sendable (Int) -> Void
+    /// Fired (bank, pad) each time playback triggers a pad — for lighting it.
+    public typealias PadFiredHandler = @Sendable (BankIndex, PadIndex) -> Void
 
     public var onPlayhead: PlayheadHandler?
     public var onTransport: TransportHandler?
     public var onEventRecorded: EventHandler?
     /// Fired when song playback advances to a new entry (passes its index).
     public var onSongAdvance: SongAdvanceHandler?
+    /// Fired each time playback triggers a pad — used to light it.
+    public var onPadFired: PadFiredHandler?
 
     private let audio: AudioEngine
     private let lock = NSLock()
@@ -352,6 +356,7 @@ public final class SequencerEngine: @unchecked Sendable {
         if fireClick && clickOn { audio.playClick(accent: accent) }
         for e in toFire {
             audio.triggerPad(PadAddress(bank: e.bank, pad: e.pad), velocity: e.velocity)
+            onPadFired?(e.bank, e.pad)
         }
         if stepChanged { onPlayhead?(currentLoopTick) }
     }

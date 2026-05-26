@@ -2,11 +2,11 @@ import SwiftUI
 import MMMidi
 import MMModels
 
-/// 8×8 pad grid mirroring the MF64. Each 4×4 quadrant is tinted to indicate
-/// which MPC bank it maps to (A bottom-left, B bottom-right, C top-left,
-/// D top-right). Pads flash white when held down on the hardware, and the
-/// currently-selected pad shows a yellow outline. Clicking a pad selects
-/// + triggers it.
+/// 8×8 pad grid mirroring the MF64. Pad fill colors come from the SAME
+/// `ledColor` source that drives the hardware LEDs, so the screen always
+/// matches the physical pads: lit/playing = white, muted = dim red, loaded =
+/// bank color, empty = dark. The selected pad gets a yellow outline (an
+/// on-screen-only editing cursor). Clicking a pad selects + triggers it.
 struct PadGridView: View {
     @Environment(AppState.self) private var state
 
@@ -17,12 +17,12 @@ struct PadGridView: View {
                     ForEach(0..<8) { col in
                         let coord = PadCoord(row: row, col: col)
                         let address = PadMapping.address(for: coord)
+                        let led = state.ledColor(for: address)
                         PadCell(
-                            coord: coord,
                             address: address,
-                            pressed: state.pressedCoords.contains(coord),
+                            fill: Self.color(led),
+                            textColor: Self.textColor(led),
                             selected: state.selectedPad == address,
-                            loaded: state.project.pads[address]?.sampleURL != nil,
                             shiftLabel: state.shiftActive ? AppState.shiftLabels[address.pad.raw] : nil
                         )
                         .onTapGesture {
@@ -39,31 +39,40 @@ struct PadGridView: View {
         .padding(14)
         .background(Color(white: 0.12), in: .rect(cornerRadius: 12))
     }
+
+    /// Convert an MF64 palette color to a SwiftUI Color (exact LED match).
+    /// `.off` renders as a dark neutral so empty pads read as recessed.
+    static func color(_ padColor: PadColor) -> Color {
+        let rgb = padColor.rgb
+        if rgb == (0, 0, 0) { return Color(white: 0.16) }
+        return Color(.sRGB,
+                     red: Double(rgb.r) / 255.0,
+                     green: Double(rgb.g) / 255.0,
+                     blue: Double(rgb.b) / 255.0)
+    }
+
+    /// Black label on bright pads, white on dark/empty ones, by luminance.
+    static func textColor(_ padColor: PadColor) -> Color {
+        let rgb = padColor.rgb
+        let lum = (0.299 * Double(rgb.r) + 0.587 * Double(rgb.g) + 0.114 * Double(rgb.b)) / 255.0
+        return lum > 0.55 ? .black.opacity(0.7) : .white.opacity(0.75)
+    }
 }
 
 private struct PadCell: View {
-    let coord: PadCoord
     let address: PadAddress
-    let pressed: Bool
+    let fill: Color
+    let textColor: Color
     let selected: Bool
-    let loaded: Bool
     var shiftLabel: String? = nil
 
     var body: some View {
-        let bankColor = Self.color(for: address.bank.rawValue)
-        let fillColor: Color = {
-            if pressed { return .white }
-            if shiftLabel != nil { return Color.indigo.opacity(0.30) }
-            if loaded { return bankColor.opacity(0.55) }
-            return bankColor.opacity(0.22)
-        }()
-
         ZStack {
             RoundedRectangle(cornerRadius: 8)
-                .fill(fillColor)
+                .fill(shiftLabel != nil ? Color.indigo.opacity(0.30) : fill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(selected ? Color.yellow : bankColor.opacity(0.6),
+                        .stroke(selected ? Color.yellow : Color.white.opacity(0.12),
                                 lineWidth: selected ? 2.5 : 1)
                 )
 
@@ -77,29 +86,15 @@ private struct PadCell: View {
                 VStack(spacing: 2) {
                     Text(address.bank.description)
                         .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                        .foregroundStyle((pressed ? Color.black : Color.white).opacity(0.7))
+                        .foregroundStyle(textColor.opacity(0.85))
                     Text("\(address.pad.label)")
                         .font(.system(size: 14, weight: .bold, design: .monospaced))
-                        .foregroundStyle((pressed ? Color.black : Color.white).opacity(0.85))
+                        .foregroundStyle(textColor)
                 }
             }
         }
         .frame(width: 64, height: 64)
-        .animation(.easeOut(duration: 0.08), value: pressed)
+        .animation(.easeOut(duration: 0.08), value: fill)
         .animation(.easeOut(duration: 0.12), value: selected)
-    }
-
-    static func color(for bankIndex: Int) -> Color {
-        switch bankIndex % 8 {
-        case 0: return .red       // A
-        case 1: return .orange    // B
-        case 2: return .yellow    // C
-        case 3: return .green     // D
-        case 4: return .mint
-        case 5: return .cyan
-        case 6: return .blue
-        case 7: return .purple
-        default: return .gray
-        }
     }
 }

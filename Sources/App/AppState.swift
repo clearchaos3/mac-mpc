@@ -23,15 +23,16 @@ final class AppState {
     var mf64Status: ConnectionStatus = .disconnected
     var nanoStatus: ConnectionStatus = .disconnected
 
-    /// Pads currently held down on the MF64.
-    var pressedCoords: Set<PadCoord> = []
+    /// Pads currently lit / playing (held on the MF64, or flashing from a
+    /// screen tap or sequencer hit). Drives both the on-screen color and the
+    /// MF64 LED so the two always match.
+    var litPads: Set<PadAddress> = []
 
     /// The pad that's currently the editing focus.
     var selectedPad: PadAddress = PadAddress(bank: .A, pad: PadIndex(0)) {
         didSet {
             if selectedPad != oldValue {
                 recomputeWaveform()
-                refreshMF64LEDs()
             }
         }
     }
@@ -146,6 +147,9 @@ final class AppState {
         }
         sequencer.onSongAdvance = { [weak self] idx in
             Task { @MainActor in self?.currentSongIndex = idx }
+        }
+        sequencer.onPadFired = { [weak self] bank, pad in
+            Task { @MainActor in self?.flashPad(PadAddress(bank: bank, pad: pad)) }
         }
     }
 
@@ -323,6 +327,7 @@ final class AppState {
         selectedPad = pad
         audio.triggerPad(pad, velocity: velocity)
         sequencer.recordHit(bank: pad.bank, pad: pad.pad, velocity: velocity)
+        flashPad(pad)
     }
 
     // MARK: - Pad Play toggles (act on the selected pad)
@@ -933,17 +938,41 @@ final class AppState {
         }
     }
 
-    /// Paint the MF64 pad LEDs: selected pad white, loaded pads in their
-    /// bank colour, empty pads off.
+    /// The single source of truth for a pad's color, used by BOTH the MF64
+    /// LED and the on-screen grid so they always match:
+    ///   lit/playing → white, muted → dim red, loaded → bank color, empty → off.
+    /// (Selection is shown as an on-screen outline only, not a fill color.)
+    func ledColor(for addr: PadAddress) -> PadColor {
+        if litPads.contains(addr) { return .white }
+        let pad = project.pads[addr]
+        if pad?.muted == true { return PadColor(paletteIndex: 6) }  // dim red
+        if pad?.sampleURL != nil { return Self.bankColor(addr.bank) }
+        return .off
+    }
+
+    /// Repaint every MF64 pad LED from `ledColor`.
     func refreshMF64LEDs() {
         guard let mf64, mf64.isConnected else { return }
-        let project = self.project
-        let selected = self.selectedPad
-        mf64.setAllPadColors { coord in
-            let addr = PadMapping.address(for: coord)
-            if addr == selected { return .white }
-            if project.pads[addr]?.sampleURL != nil { return Self.bankColor(addr.bank) }
-            return .off
+        mf64.setAllPadColors { coord in self.ledColor(for: PadMapping.address(for: coord)) }
+    }
+
+    /// Push a single pad's current color to its MF64 LED.
+    private func setPadLED(_ addr: PadAddress) {
+        guard let mf64, mf64.isConnected, let coord = PadMapping.coord(for: addr) else { return }
+        mf64.setPadColor(pad: coord, color: ledColor(for: addr))
+    }
+
+    /// Light a pad (held) on both surfaces.
+    func lightOn(_ addr: PadAddress) { litPads.insert(addr); setPadLED(addr) }
+    /// Unlight a pad on both surfaces.
+    func lightOff(_ addr: PadAddress) { litPads.remove(addr); setPadLED(addr) }
+
+    /// Briefly flash a pad (screen tap / sequencer hit), then restore.
+    func flashPad(_ addr: PadAddress) {
+        lightOn(addr)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(110))
+            lightOff(addr)
         }
     }
 
@@ -968,8 +997,8 @@ final class AppState {
         case .disconnected:
             mf64Status = .disconnected
         case .padPressed(let coord, _, let vel):
-            pressedCoords.insert(coord)
             let addr = PadMapping.address(for: coord)
+            lightOn(addr)
             if padFXActive {
                 handlePadFXPress(addr.pad.raw)
             } else {
@@ -977,8 +1006,8 @@ final class AppState {
             }
             lastEvent = "MF64 press \(coord) vel \(vel)"
         case .padReleased(let coord, _):
-            pressedCoords.remove(coord)
             let addr = PadMapping.address(for: coord)
+            lightOff(addr)
             // Note-On pads gate: stop the voice when the pad is released.
             if project.pads[addr]?.noteOn == true { audio.stopPad(addr) }
             lastEvent = "MF64 release \(coord)"
