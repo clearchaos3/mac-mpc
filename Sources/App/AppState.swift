@@ -348,6 +348,41 @@ final class AppState {
         refreshMF64LEDs()
     }
 
+    // MARK: - Fader assignment
+
+    enum FaderParameter: String, CaseIterable {
+        case volume, pan, tune, cutoff, attack, decay
+        var label: String { rawValue.capitalized }
+    }
+    var faderParameter: FaderParameter = .volume
+
+    /// Apply a normalised fader value to the assigned parameter of the
+    /// selected pad.
+    func applyFader(_ norm: Double) {
+        guard project.pads[selectedPad] != nil else { return }
+        let v = max(0, min(1, norm))
+        switch faderParameter {
+        case .volume: project.pads[selectedPad]?.volume_dB = v * 80 - 74
+        case .pan:    project.pads[selectedPad]?.pan = v * 2 - 1
+        case .tune:   project.pads[selectedPad]?.semiTune = Int(round(v * 48 - 24))
+        case .cutoff:
+            project.pads[selectedPad]?.filterCutoff = v
+            if project.pads[selectedPad]?.filterType == Pad.FilterType.off {
+                project.pads[selectedPad]?.filterType = .lpf2
+            }
+        case .attack: project.pads[selectedPad]?.ampAttack = v
+        case .decay:  project.pads[selectedPad]?.ampDecayOrRelease = v
+        }
+        syncPadToEngine(selectedPad)
+    }
+
+    func cycleFaderParameter() {
+        let all = FaderParameter.allCases
+        let idx = all.firstIndex(of: faderParameter) ?? 0
+        faderParameter = all[(idx + 1) % all.count]
+        lastEvent = "Fader → \(faderParameter.label)"
+    }
+
     // MARK: - SHIFT layer (secondary pad functions)
 
     /// When active, the pad grid shows the 16 secondary functions and a pad
@@ -380,7 +415,7 @@ final class AppState {
         case 5:  project.sequences[active]?.halfSpeed(numerator: project.timeSigNumerator, denominator: project.timeSigDenominator); lastEvent = "Half Speed"
         case 6:  project.sequences[active]?.doubleSpeed(numerator: project.timeSigNumerator, denominator: project.timeSigDenominator); lastEvent = "Double Speed"
         case 7:  lastEvent = "MIDI Config — not yet implemented"
-        case 8:  lastEvent = "Fader assign — fader = pad volume"
+        case 8:  cycleFaderParameter()
         case 9:  recQuantize.toggle(); lastEvent = "Rec Quantize \(recQuantize ? "ON" : "OFF")"
         case 10: lastEvent = "Resample — not yet implemented"
         case 11: isSongOpen = true
@@ -987,9 +1022,7 @@ final class AppState {
             }
 
         case NanoCC.fader:
-            // Fader → selected pad volume (default fader assignment).
-            project.pads[selectedPad]?.volume_dB = (norm * 80) - 74
-            syncPadToEngine(selectedPad)
+            applyFader(norm)
 
         case NanoCC.play where value == 127:
             togglePlay()
