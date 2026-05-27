@@ -1026,6 +1026,10 @@ final class AppState {
         case .padPressed(let coord, _, let vel):
             let addr = PadMapping.address(for: coord)
             lightOn(addr)
+            // A physical press makes the MF64 reassert its own stored colors
+            // across the grid; repaint immediately to overwrite that, instead
+            // of waiting for the keep-alive tick.
+            refreshMF64LEDs()
             if padFXActive {
                 handlePadFXPress(addr.pad.raw)
             } else {
@@ -1035,6 +1039,7 @@ final class AppState {
         case .padReleased(let coord, _):
             let addr = PadMapping.address(for: coord)
             lightOff(addr)
+            refreshMF64LEDs()
             // Note-On pads gate: stop the voice when the pad is released.
             if project.pads[addr]?.noteOn == true { audio.stopPad(addr) }
             lastEvent = "MF64 release \(coord)"
