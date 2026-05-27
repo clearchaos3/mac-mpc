@@ -126,9 +126,19 @@ final class AppState {
         wireSequencer()
     }
 
+    /// Keeps re-asserting our LED colors so the device can't hold onto its
+    /// own stored colors after a press/bank event. Re-sending identical state
+    /// is invisible; it only "wins back" pads the device reverted.
+    private var ledKeepAlive: Timer?
+
     func start() {
         startMF64()
         startNano()
+        let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshMF64LEDs() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        ledKeepAlive = timer
     }
 
     // MARK: - Transport
