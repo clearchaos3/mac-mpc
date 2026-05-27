@@ -967,6 +967,17 @@ final class AppState {
     /// Unlight a pad on both surfaces.
     func lightOff(_ addr: PadAddress) { litPads.remove(addr); setPadLED(addr) }
 
+    /// Diagnostic: clear per-button animations, paint every ring bright white,
+    /// and surface the output endpoint + channel. If the device goes all-white,
+    /// runtime LED control works; if not, a device-side global animation/config
+    /// is overriding MIDI (fix in the Midi Fighter Utility).
+    func testLEDs() {
+        guard let mf64, mf64.isConnected else { lastEvent = "MF64 not connected"; return }
+        mf64.clearAnimations()
+        mf64.setAllPadColors { _ in .white }
+        lastEvent = "LED test (all white) · \(mf64.diagnosticSummary)"
+    }
+
     /// Briefly flash a pad (screen tap / sequencer hit), then restore.
     func flashPad(_ addr: PadAddress) {
         lightOn(addr)
@@ -998,6 +1009,7 @@ final class AppState {
         switch event {
         case .connected(let name):
             mf64Status = .connected(name: name)
+            mf64?.clearAnimations()
             refreshMF64LEDs()
         case .disconnected:
             mf64Status = .disconnected

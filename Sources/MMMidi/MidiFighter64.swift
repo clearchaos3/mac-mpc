@@ -248,4 +248,30 @@ public final class MidiFighter64: @unchecked Sendable {
     public func snapshotEndpoints() -> (sources: [String], destinations: [String]) {
         (listSources(), listDestinations())
     }
+
+    /// One-line state for debugging LED control.
+    public var diagnosticSummary: String {
+        let dest = destination != 0 ? endpointName(destination) : "(none)"
+        return "out=\(dest) ledCh=\(observedChannel + 1) connected=\(connected)"
+    }
+
+    /// Clear any per-button animation (set to None) so stored/animated
+    /// states don't override our MIDI colors. Animation messages are Note-Ons
+    /// on the channel one above the LED channel, note = pad note − 36, with a
+    /// velocity in the "None" range (0). See the MF64 user guide, Appendix 2.
+    public func clearAnimations() {
+        guard connected else { return }
+        let animChannel = (observedChannel + 1) & 0x0F
+        let status: UInt8 = 0x90 | animChannel
+        var bytes: [UInt8] = []
+        for row in 0..<8 {
+            for col in 0..<8 {
+                let note = MFNoteMap.note(for: PadCoord(row: row, col: col))
+                bytes.append(status)
+                bytes.append(note >= 36 ? note - 36 : note)
+                bytes.append(0) // velocity 0 = None animation
+            }
+        }
+        sendMIDIBytes(bytes, port: outputPort, destination: destination)
+    }
 }

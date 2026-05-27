@@ -186,6 +186,15 @@ struct ContentView: View {
             .controlSize(.large)
 
             Button {
+                state.testLEDs()
+            } label: {
+                Label("Test LEDs", systemImage: "lightbulb")
+                    .font(.system(.body, design: .monospaced))
+            }
+            .controlSize(.large)
+            .help("Paint all MF64 rings white + show the output channel (LED diagnostic)")
+
+            Button {
                 state.shiftActive.toggle()
             } label: {
                 Label("SHIFT", systemImage: "shift")
