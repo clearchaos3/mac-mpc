@@ -1069,31 +1069,78 @@ final class AppState {
     /// on press, 0 on release; we act on press.
     private func routeNanoCC(cc: UInt8, value: UInt8) {
         let norm = Double(value) / 127.0
+        let pressed = value == 127   // nano buttons send 127 press / 0 release
+
         switch cc {
+        // --- Continuous: knobs + fader ---
         case NanoCC.k1: setParameter(at: 0, normalised: norm)
         case NanoCC.k2: setParameter(at: 1, normalised: norm)
         case NanoCC.k3: setParameter(at: 2, normalised: norm)
-
+        case NanoCC.kBars:     setBarsFromKnob(value)
+        case NanoCC.kSwing:    activeSequenceSwing = norm
+        case NanoCC.kQuantize: setQuantizeFromKnob(value)
+        case NanoCC.fader:     applyFader(norm)
         case NanoCC.dataWheel:
-            // Knob 9 acts as the "data wheel": when the browser is open its
-            // absolute position scrolls the list.
+            // Data wheel scrolls the browser when it's open.
             if isBrowserOpen, !browser.entries.isEmpty {
                 let idx = Int((norm * Double(browser.entries.count - 1)).rounded())
                 browser.highlightedIndex = max(0, min(browser.entries.count - 1, idx))
             }
 
-        case NanoCC.fader:
-            applyFader(norm)
-
-        case NanoCC.play where value == 127:
-            togglePlay()
-        case NanoCC.stop where value == 127:
-            stopTransport()
-        case NanoCC.rec where value == 127:
+        // --- Transport ---
+        case NanoCC.play where pressed:  togglePlay()
+        case NanoCC.stop where pressed:  stopTransport()
+        case NanoCC.rec where pressed:
             if transport == .recording { stopTransport() } else { recordSequence() }
+        case NanoCC.cycle where pressed:
+            if isBrowserOpen { loadHighlightedToSelectedPad(); isBrowserOpen = false }
+            else { cycleMetronome() }
+
+        // --- Top buttons: pages + shift + browser ---
+        case NanoCC.bPageTrim   where pressed: currentPage = .trim
+        case NanoCC.bPageMix    where pressed: currentPage = .mix
+        case NanoCC.bPageAmpEnv where pressed: currentPage = .ampEnv
+        case NanoCC.bPageTune   where pressed: currentPage = .tune
+        case NanoCC.bPagePlay   where pressed: currentPage = .play
+        case NanoCC.bPageFilter where pressed: currentPage = .filter
+        case NanoCC.bPageFltEnv where pressed: currentPage = .fltEnv
+        case NanoCC.bShift      where pressed: shiftActive.toggle()
+        case NanoCC.bBrowser    where pressed: isBrowserOpen ? (isBrowserOpen = false) : openBrowser()
+
+        // --- Bottom buttons: actions + pad-play ---
+        case NanoCC.bTrimCommit where pressed: commitTrim()
+        case NanoCC.bTapTempo   where pressed: tapTempo()
+        case NanoCC.bChop       where pressed:
+            chopSelectedPad(.grid(bpm: activeSequenceBPM, beatsPerSlice: 2))
+        case NanoCC.bLoop    where pressed: toggleLoop()
+        case NanoCC.bReverse where pressed: toggleReverse()
+        case NanoCC.bNoteOn  where pressed: toggleNoteOn()
+        case NanoCC.bMute    where pressed: toggleMute()
+        case NanoCC.bPadFX   where pressed: togglePadFXMode()
+        case NanoCC.bBounce  where pressed: toggleBounce()
 
         default:
-            lastEvent = "nano CC \(cc) = \(value)"
+            break
+        }
+    }
+
+    private func setBarsFromKnob(_ value: UInt8) {
+        let options = [1, 2, 4, 8, 16]
+        let idx = min(options.count - 1, Int(value) * options.count / 128)
+        activeSequenceBars = options[idx]
+    }
+
+    private func setQuantizeFromKnob(_ value: UInt8) {
+        let options = [4, 8, 16, 32, 64]
+        let idx = min(options.count - 1, Int(value) * options.count / 128)
+        activeSequenceQuantize = options[idx]
+    }
+
+    private func cycleMetronome() {
+        metronome = switch metronome {
+        case .off: .on
+        case .on: .recordOnly
+        case .recordOnly: .off
         }
     }
 }
