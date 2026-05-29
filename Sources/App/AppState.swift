@@ -45,10 +45,6 @@ final class AppState {
     /// change, load, or destructive edit.
     var waveformPeaks: WaveformPeaks = WaveformPeaks(peaks: [], frameCount: 0, sampleRate: 0)
 
-    /// Sample browser state.
-    var browser: SampleBrowser
-    var isBrowserOpen: Bool = false
-
     /// Transport / sequencer.
     let sequencer: SequencerEngine
     var transport: SequencerEngine.Transport = .stopped
@@ -122,7 +118,6 @@ final class AppState {
 
     init() {
         audio.start()
-        browser = SampleBrowser(audio: audio)
         sequencer = SequencerEngine(audio: audio)
         wireSequencer()
     }
@@ -443,10 +438,8 @@ final class AppState {
         }
     }
 
-    func openBrowser() {
-        browser.refresh()
-        isBrowserOpen = true
-    }
+    /// Sample selection is the native macOS file picker.
+    func openBrowser() { browseForSampleFile() }
 
     // MARK: - Master compressor
 
@@ -591,15 +584,9 @@ final class AppState {
         }
     }
 
-    func loadHighlightedToSelectedPad() {
-        guard let entry = browser.highlightedEntry, entry.kind == .file else { return }
-        loadSampleURL(entry.url)
-    }
-
-    /// Load any file URL into the selected pad (shared by the in-app browser
-    /// and the native Browse… panel). Wrapped in security-scoped access so
-    /// files picked from TCC-protected folders (Downloads/Desktop/Documents)
-    /// can be read.
+    /// Load any file URL into the selected pad. Wrapped in security-scoped
+    /// access so files picked from TCC-protected folders (Downloads/Desktop/
+    /// Documents) via the native panel can be read.
     func loadSampleURL(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -628,13 +615,12 @@ final class AppState {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.audio]
+        panel.allowedContentTypes = [.audio, .mp3, .wav, .aiff, .mpeg4Audio]
         panel.message = "Choose a sample for pad \(selectedPad.description)"
         panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Downloads", isDirectory: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         loadSampleURL(url)
-        isBrowserOpen = false
     }
 
     /// Chop the selected pad's sample (honoring its current start/end) into
@@ -1107,21 +1093,13 @@ final class AppState {
         case NanoCC.kSwing:    activeSequenceSwing = norm
         case NanoCC.kQuantize: setQuantizeFromKnob(value)
         case NanoCC.fader:     applyFader(norm)
-        case NanoCC.dataWheel:
-            // Data wheel scrolls the browser when it's open.
-            if isBrowserOpen, !browser.entries.isEmpty {
-                let idx = Int((norm * Double(browser.entries.count - 1)).rounded())
-                browser.highlightedIndex = max(0, min(browser.entries.count - 1, idx))
-            }
 
         // --- Transport ---
         case NanoCC.play where pressed:  togglePlay()
         case NanoCC.stop where pressed:  stopTransport()
         case NanoCC.rec where pressed:
             if transport == .recording { stopTransport() } else { recordSequence() }
-        case NanoCC.cycle where pressed:
-            if isBrowserOpen { loadHighlightedToSelectedPad(); isBrowserOpen = false }
-            else { cycleMetronome() }
+        case NanoCC.cycle where pressed: cycleMetronome()
 
         // --- Top buttons: pages + shift + browser ---
         case NanoCC.bPageTrim   where pressed: currentPage = .trim
@@ -1132,7 +1110,7 @@ final class AppState {
         case NanoCC.bPageFilter where pressed: currentPage = .filter
         case NanoCC.bPageFltEnv where pressed: currentPage = .fltEnv
         case NanoCC.bShift      where pressed: shiftActive.toggle()
-        case NanoCC.bBrowser    where pressed: isBrowserOpen ? (isBrowserOpen = false) : openBrowser()
+        case NanoCC.bBrowser    where pressed: browseForSampleFile()
 
         // --- Bottom buttons: actions + pad-play ---
         case NanoCC.bTrimCommit where pressed: commitTrim()

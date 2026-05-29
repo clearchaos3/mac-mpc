@@ -18,10 +18,6 @@ struct ContentView: View {
         .padding(20)
         .frame(minWidth: 780, minHeight: 1100)
         .background(Color(white: 0.08))
-        .sheet(isPresented: $state.isBrowserOpen) {
-            SampleBrowserView()
-                .environment(state)
-        }
         .sheet(isPresented: $state.isCompressorOpen) {
             CompressorView()
                 .environment(state)
