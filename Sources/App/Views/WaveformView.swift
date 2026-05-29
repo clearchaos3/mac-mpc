@@ -18,10 +18,10 @@ struct WaveformView: View {
                     .fill(Color(white: 0.04))
 
                 if !peaks.peaks.isEmpty {
+                    // Filled bars (a path of thin rects). Filling line segments
+                    // paints nothing, so each bin is drawn as a rectangle.
                     waveformShape(in: geo.size)
-                        .fill(Color.white.opacity(0.25))
-                    waveformShape(in: geo.size)
-                        .fill(activeMask(in: geo.size))
+                        .fill(Color(red: 0.95, green: 0.78, blue: 0.36))
                 }
 
                 // Inactive regions overlay (darken before start / after end).
@@ -54,33 +54,16 @@ struct WaveformView: View {
             guard bins > 0 else { return }
             let midY = size.height / 2
             let stepX = size.width / CGFloat(bins)
+            let barW = max(1, stepX)
             for i in 0..<bins {
                 let pk = peaks.peaks[i]
                 let x = CGFloat(i) * stepX
                 let topY = midY - CGFloat(pk.y) * midY     // peaks.y = max (>=0)
                 let botY = midY - CGFloat(pk.x) * midY     // peaks.x = min (<=0)
-                p.move(to: CGPoint(x: x, y: topY))
-                p.addLine(to: CGPoint(x: x, y: botY))
+                let h = max(1, botY - topY)
+                p.addRect(CGRect(x: x, y: topY, width: barW, height: h))
             }
         }
-    }
-
-    /// A vertical stripe revealing the wave-fill brightly inside the active
-    /// [start, end] region.
-    private func activeMask(in size: CGSize) -> LinearGradient {
-        let startX = size.width * start
-        let endX = size.width * end
-        return LinearGradient(
-            stops: [
-                .init(color: .clear, location: 0),
-                .init(color: .clear, location: startX / max(1, size.width)),
-                .init(color: .yellow, location: startX / max(1, size.width)),
-                .init(color: .yellow, location: endX / max(1, size.width)),
-                .init(color: .clear, location: endX / max(1, size.width)),
-                .init(color: .clear, location: 1),
-            ],
-            startPoint: .leading, endPoint: .trailing
-        )
     }
 
     private func marker(at position: Double, in size: CGSize, color: Color, label: String) -> some View {
