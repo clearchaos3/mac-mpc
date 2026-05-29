@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import AVFoundation
 import AppKit
+import UniformTypeIdentifiers
 import MMAudio
 import MMMidi
 import MMModels
@@ -592,10 +593,19 @@ final class AppState {
 
     func loadHighlightedToSelectedPad() {
         guard let entry = browser.highlightedEntry, entry.kind == .file else { return }
+        loadSampleURL(entry.url)
+    }
+
+    /// Load any file URL into the selected pad (shared by the in-app browser
+    /// and the native Browse… panel). Wrapped in security-scoped access so
+    /// files picked from TCC-protected folders (Downloads/Desktop/Documents)
+    /// can be read.
+    func loadSampleURL(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            try audio.loadSample(url: entry.url, into: selectedPad)
-            project.pads[selectedPad]?.sampleURL = entry.url
-            // Reset trim markers when a new sample lands.
+            try audio.loadSample(url: url, into: selectedPad)
+            project.pads[selectedPad]?.sampleURL = url
             project.pads[selectedPad]?.start = 0
             project.pads[selectedPad]?.end = 1
             project.pads[selectedPad]?.loopStart = 0
@@ -603,11 +613,28 @@ final class AppState {
             recomputeWaveform()
             syncPadToEngine(selectedPad)
             refreshMF64LEDs()
-            lastEvent = "Loaded \(entry.displayName) → \(selectedPad)"
+            lastEvent = "Loaded \(url.lastPathComponent) → \(selectedPad)"
         } catch {
             NSLog("loadSample failed: \(error)")
             lastEvent = "Load failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Native file picker — runs with system file access, so it reaches any
+    /// folder regardless of the app's TCC permissions. The reliable way to
+    /// grab a sample from Downloads/Desktop/etc.
+    func browseForSampleFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.audio]
+        panel.message = "Choose a sample for pad \(selectedPad.description)"
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads", isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        loadSampleURL(url)
+        isBrowserOpen = false
     }
 
     /// Chop the selected pad's sample (honoring its current start/end) into

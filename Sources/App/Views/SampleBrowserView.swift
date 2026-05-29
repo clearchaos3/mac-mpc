@@ -136,6 +136,12 @@ struct SampleBrowserView: View {
             Text("Target: \(pad.description)")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.7))
+            Button {
+                state.browseForSampleFile()
+            } label: {
+                Label("Browse…", systemImage: "folder.badge.plus")
+            }
+            .help("Open the macOS file picker — reaches Downloads/Desktop/anywhere")
             Spacer()
             Button("Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
